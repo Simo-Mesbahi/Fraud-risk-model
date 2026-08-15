@@ -13,6 +13,7 @@ import yaml
 # Data containers
 # =============================================================================
 
+
 @dataclass(frozen=True)
 class SyntheticDataBundle:
     customers: pd.DataFrame
@@ -25,11 +26,14 @@ class SyntheticDataBundle:
 # Configuration
 # =============================================================================
 
+
 def load_config(config_path: str | Path) -> dict[str, Any]:
     config_path = Path(config_path)
 
     if not config_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+        raise FileNotFoundError(
+            f"Configuration file not found: {config_path}"
+        )
 
     with config_path.open("r", encoding="utf-8") as file:
         config = yaml.safe_load(file)
@@ -44,20 +48,27 @@ def load_config(config_path: str | Path) -> dict[str, Any]:
 # Generic helpers
 # =============================================================================
 
+
 def _validate_probabilities(
     probabilities: dict[str, float],
     name: str,
 ) -> None:
-    values = np.asarray(list(probabilities.values()), dtype=float)
+    values = np.asarray(
+        list(probabilities.values()),
+        dtype=float,
+    )
 
     if np.any(values < 0):
-        raise ValueError(f"{name}: probabilities cannot be negative.")
+        raise ValueError(
+            f"{name}: probabilities cannot be negative."
+        )
 
-    total = values.sum()
+    total = float(values.sum())
 
     if not np.isclose(total, 1.0, atol=1e-8):
         raise ValueError(
-            f"{name}: probabilities must sum to 1.0, got {total:.8f}"
+            f"{name}: probabilities must sum to 1.0, "
+            f"got {total:.8f}"
         )
 
 
@@ -67,10 +78,19 @@ def _sample_categories(
     size: int,
     name: str,
 ) -> np.ndarray:
-    _validate_probabilities(probabilities, name)
+    _validate_probabilities(
+        probabilities,
+        name,
+    )
 
-    categories = np.asarray(list(probabilities.keys()))
-    probs = np.asarray(list(probabilities.values()), dtype=float)
+    categories = np.asarray(
+        list(probabilities.keys())
+    )
+
+    probs = np.asarray(
+        list(probabilities.values()),
+        dtype=float,
+    )
 
     return rng.choice(
         categories,
@@ -79,9 +99,36 @@ def _sample_categories(
     )
 
 
-def _sigmoid(x: np.ndarray) -> np.ndarray:
-    x = np.clip(x, -30, 30)
-    return 1.0 / (1.0 + np.exp(-x))
+def _sigmoid(
+    x: np.ndarray,
+) -> np.ndarray:
+    x = np.clip(
+        x,
+        -30.0,
+        30.0,
+    )
+
+    return 1.0 / (
+        1.0 + np.exp(-x)
+    )
+
+
+def _logit(
+    p: float,
+) -> float:
+    p = float(
+        np.clip(
+            p,
+            1e-8,
+            1.0 - 1e-8,
+        )
+    )
+
+    return float(
+        np.log(
+            p / (1.0 - p)
+        )
+    )
 
 
 def _truncated_normal(
@@ -105,28 +152,104 @@ def _truncated_normal(
     )
 
 
+def _normalize_positive_signal(
+    values: np.ndarray,
+    percentile: float = 95.0,
+) -> np.ndarray:
+    """
+    Robustly normalize a non-negative fraud signal.
+
+    This avoids one mechanism dominating only because
+    its numerical scale is larger than another mechanism.
+    """
+
+    values = np.asarray(
+        values,
+        dtype=float,
+    )
+
+    values = np.nan_to_num(
+        values,
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
+
+    values = np.maximum(
+        values,
+        0.0,
+    )
+
+    positive = values[
+        values > 0
+    ]
+
+    if len(positive) == 0:
+        return np.zeros_like(
+            values,
+            dtype=float,
+        )
+
+    scale = np.percentile(
+        positive,
+        percentile,
+    )
+
+    if scale <= 0:
+        return np.zeros_like(
+            values,
+            dtype=float,
+        )
+
+    normalized = (
+        values / scale
+    )
+
+    return np.clip(
+        normalized,
+        0.0,
+        3.0,
+    )
+
+
 # =============================================================================
 # Customers
 # =============================================================================
+
 
 def generate_customers(
     config: dict[str, Any],
     rng: np.random.Generator,
 ) -> pd.DataFrame:
-    n_customers = int(config["simulation"]["n_customers"])
+    n_customers = int(
+        config["simulation"]["n_customers"]
+    )
+
     cfg = config["entities"]["customers"]
 
     age_cfg = cfg["age"]
 
-    if age_cfg.get("distribution") == "truncated_normal":
+    if (
+        age_cfg.get("distribution")
+        == "truncated_normal"
+    ):
         ages = _truncated_normal(
             rng=rng,
-            mean=age_cfg["mean"],
-            std=age_cfg["std"],
-            minimum=age_cfg["min"],
-            maximum=age_cfg["max"],
+            mean=float(
+                age_cfg["mean"]
+            ),
+            std=float(
+                age_cfg["std"]
+            ),
+            minimum=float(
+                age_cfg["min"]
+            ),
+            maximum=float(
+                age_cfg["max"]
+            ),
             size=n_customers,
         ).round().astype(int)
+
     else:
         ages = rng.integers(
             age_cfg["min"],
@@ -141,205 +264,237 @@ def generate_customers(
     )
 
     coverage_level = _sample_categories(
-        rng,
-        cfg["coverage_levels"],
-        n_customers,
-        "customer coverage levels",
+        rng=rng,
+        probabilities=cfg[
+            "coverage_levels"
+        ],
+        size=n_customers,
+        name="customer coverage levels",
     )
 
     behavior_segment = _sample_categories(
-        rng,
-        cfg["behavior_segments"],
-        n_customers,
-        "customer behavior segments",
+        rng=rng,
+        probabilities=cfg[
+            "behavior_segments"
+        ],
+        size=n_customers,
+        name="customer behavior segments",
     )
 
-    frequency_multiplier_map = cfg["claim_frequency_multiplier"]
+    multiplier_map = cfg[
+        "claim_frequency_multiplier"
+    ]
 
-    frequency_multiplier = np.array(
+    claim_frequency_multiplier = np.asarray(
         [
-            frequency_multiplier_map[segment]
+            multiplier_map[segment]
             for segment in behavior_segment
         ],
         dtype=float,
     )
 
-    customers = pd.DataFrame(
+    return pd.DataFrame(
         {
             "customer_id": [
                 f"CUST_{i:06d}"
-                for i in range(1, n_customers + 1)
+                for i in range(
+                    1,
+                    n_customers + 1,
+                )
             ],
             "customer_age": ages,
             "customer_tenure_months": tenure_months,
             "coverage_level": coverage_level,
             "customer_behavior_segment": behavior_segment,
-            "claim_frequency_multiplier": frequency_multiplier,
+            "claim_frequency_multiplier": (
+                claim_frequency_multiplier
+            ),
         }
     )
-
-    return customers
 
 
 # =============================================================================
 # Providers
 # =============================================================================
 
+
 def generate_providers(
     config: dict[str, Any],
     rng: np.random.Generator,
 ) -> pd.DataFrame:
-    n_providers = int(config["simulation"]["n_providers"])
+    n_providers = int(
+        config["simulation"]["n_providers"]
+    )
+
     cfg = config["entities"]["providers"]
 
     provider_type = _sample_categories(
-        rng,
-        cfg["provider_types"],
-        n_providers,
-        "provider types",
+        rng=rng,
+        probabilities=cfg[
+            "provider_types"
+        ],
+        size=n_providers,
+        name="provider types",
     )
 
     provider_region = _sample_categories(
-        rng,
-        cfg["regions"],
-        n_providers,
-        "provider regions",
+        rng=rng,
+        probabilities=cfg["regions"],
+        size=n_providers,
+        name="provider regions",
     )
 
     behavior_segment = _sample_categories(
-        rng,
-        cfg["behavior_segments"],
-        n_providers,
-        "provider behavior segments",
-    )
-
-    volume_multiplier_map = cfg["claim_volume_multiplier"]
-
-    volume_multiplier = np.array(
-        [
-            volume_multiplier_map[segment]
-            for segment in behavior_segment
+        rng=rng,
+        probabilities=cfg[
+            "behavior_segments"
         ],
-        dtype=float,
-    )
-
-    provider_tenure_months = rng.integers(
-        1,
-        241,
         size=n_providers,
+        name="provider behavior segments",
     )
 
-    providers = pd.DataFrame(
+    multiplier_map = cfg[
+        "claim_volume_multiplier"
+    ]
+
+    provider_volume_multiplier = (
+        np.asarray(
+            [
+                multiplier_map[segment]
+                for segment
+                in behavior_segment
+            ],
+            dtype=float,
+        )
+    )
+
+    provider_tenure_months = (
+        rng.integers(
+            1,
+            241,
+            size=n_providers,
+        )
+    )
+
+    return pd.DataFrame(
         {
             "provider_id": [
                 f"PROV_{i:05d}"
-                for i in range(1, n_providers + 1)
+                for i in range(
+                    1,
+                    n_providers + 1,
+                )
             ],
             "provider_type": provider_type,
             "provider_region": provider_region,
-            "provider_tenure_months": provider_tenure_months,
-            "provider_behavior_segment": behavior_segment,
-            "provider_volume_multiplier": volume_multiplier,
+            "provider_tenure_months": (
+                provider_tenure_months
+            ),
+            "provider_behavior_segment": (
+                behavior_segment
+            ),
+            "provider_volume_multiplier": (
+                provider_volume_multiplier
+            ),
         }
     )
-
-    return providers
 
 
 # =============================================================================
 # Policies
 # =============================================================================
 
+
 def generate_policies(
     customers: pd.DataFrame,
     config: dict[str, Any],
     rng: np.random.Generator,
 ) -> pd.DataFrame:
+    """
+    Generate policies that already exist at the beginning
+    of the simulation.
+
+    Claim-specific policy tenure will later be calculated
+    using the actual claim timestamp.
+    """
+
     n = len(customers)
 
     simulation_start = pd.Timestamp(
         config["simulation"]["start_date"]
     )
-    simulation_end = pd.Timestamp(
-        config["simulation"]["end_date"]
-    )
 
-    max_policy_tenure = np.minimum(
-        customers["customer_tenure_months"].to_numpy(),
+    max_prior_tenure = np.minimum(
+        customers[
+            "customer_tenure_months"
+        ].to_numpy(),
         120,
     )
 
-    policy_tenure_months = np.array(
+    prior_policy_tenure = np.asarray(
         [
-            rng.integers(1, int(max_tenure) + 1)
-            for max_tenure in max_policy_tenure
+            rng.integers(
+                1,
+                int(max_tenure) + 1,
+            )
+            for max_tenure
+            in max_prior_tenure
         ]
     )
 
-    latest_possible_start = (
-        simulation_end
-        - pd.to_timedelta(policy_tenure_months * 30, unit="D")
-    )
-
-    policy_start_date = pd.to_datetime(
-        np.maximum(
-            latest_possible_start.values.astype("datetime64[ns]"),
-            simulation_start.to_datetime64(),
+    policy_start_date = (
+        simulation_start
+        - pd.to_timedelta(
+            prior_policy_tenure * 30,
+            unit="D",
         )
     )
 
-    policy_cfg = config["policy"]
-
-    recent_change_probability = float(
-        policy_cfg["recent_change_probability"]
-    )
-
-    recent_policy_change = (
-        rng.random(n) < recent_change_probability
-    )
-
-    change_window = int(
-        policy_cfg["recent_change_window_days"]
-    )
-
-    days_since_policy_change = np.where(
-        recent_policy_change,
-        rng.integers(
-            1,
-            change_window + 1,
-            size=n,
-        ),
-        np.nan,
-    )
-
-    policies = pd.DataFrame(
+    return pd.DataFrame(
         {
             "policy_id": [
                 f"POL_{i:06d}"
-                for i in range(1, n + 1)
+                for i in range(
+                    1,
+                    n + 1,
+                )
             ],
-            "customer_id": customers["customer_id"].to_numpy(),
-            "coverage_level": customers["coverage_level"].to_numpy(),
-            "policy_start_date": policy_start_date,
+            "customer_id": (
+                customers[
+                    "customer_id"
+                ].to_numpy()
+            ),
+            "coverage_level": (
+                customers[
+                    "coverage_level"
+                ].to_numpy()
+            ),
+            "policy_start_date": (
+                policy_start_date
+            ),
             "policy_end_date": pd.NaT,
-            "policy_tenure_months": policy_tenure_months,
-            "recent_policy_change": recent_policy_change,
-            "days_since_policy_change": days_since_policy_change,
         }
     )
 
-    return policies
-
 
 # =============================================================================
-# Claim date generation
+# Claim dates
 # =============================================================================
+
 
 def _build_daily_sampling_weights(
     config: dict[str, Any],
-) -> tuple[pd.DatetimeIndex, np.ndarray]:
-    start = pd.Timestamp(config["simulation"]["start_date"])
-    end = pd.Timestamp(config["simulation"]["end_date"])
+) -> tuple[
+    pd.DatetimeIndex,
+    np.ndarray,
+]:
+    start = pd.Timestamp(
+        config["simulation"]["start_date"]
+    )
+
+    end = pd.Timestamp(
+        config["simulation"]["end_date"]
+    )
 
     dates = pd.date_range(
         start=start,
@@ -347,16 +502,35 @@ def _build_daily_sampling_weights(
         freq="D",
     )
 
-    weights = np.ones(len(dates), dtype=float)
+    weights = np.ones(
+        len(dates),
+        dtype=float,
+    )
 
-    seasonality = config["simulation"].get("seasonality", {})
+    seasonality = (
+        config["simulation"].get(
+            "seasonality",
+            {},
+        )
+    )
 
-    if seasonality.get("enabled", False):
-        monthly = seasonality["monthly_factors"]
+    if seasonality.get(
+        "enabled",
+        False,
+    ):
+        monthly_factors = (
+            seasonality[
+                "monthly_factors"
+            ]
+        )
 
-        weights = np.array(
+        weights = np.asarray(
             [
-                float(monthly[f"{date.month:02d}"])
+                float(
+                    monthly_factors[
+                        f"{date.month:02d}"
+                    ]
+                )
                 for date in dates
             ],
             dtype=float,
@@ -372,34 +546,45 @@ def _generate_submission_dates(
     rng: np.random.Generator,
     size: int,
 ) -> pd.Series:
-    dates, probabilities = _build_daily_sampling_weights(config)
+    dates, probabilities = (
+        _build_daily_sampling_weights(
+            config
+        )
+    )
 
-    sampled = rng.choice(
+    sampled_dates = rng.choice(
         dates.to_numpy(),
         size=size,
         p=probabilities,
     )
 
-    timestamps = pd.to_datetime(sampled)
+    timestamps = pd.to_datetime(
+        sampled_dates
+    )
 
-    # Add time-of-day variability.
     seconds = rng.integers(
         0,
         24 * 60 * 60,
         size=size,
     )
 
-    timestamps = timestamps + pd.to_timedelta(
-        seconds,
-        unit="s",
+    timestamps = (
+        timestamps
+        + pd.to_timedelta(
+            seconds,
+            unit="s",
+        )
     )
 
-    return pd.Series(timestamps)
+    return pd.Series(
+        timestamps
+    )
 
 
 # =============================================================================
-# Service generation
+# Services
 # =============================================================================
+
 
 def _sample_service_categories(
     config: dict[str, Any],
@@ -407,110 +592,26 @@ def _sample_service_categories(
     size: int,
 ) -> np.ndarray:
     probabilities = {
-        service: cfg["probability"]
-        for service, cfg in config["services"].items()
+        service: service_cfg[
+            "probability"
+        ]
+        for service, service_cfg
+        in config["services"].items()
     }
 
     return _sample_categories(
-        rng,
-        probabilities,
-        size,
-        "service probabilities",
+        rng=rng,
+        probabilities=probabilities,
+        size=size,
+        name="service probabilities",
     )
-
-
-def _generate_claim_amounts(
-    service_categories: np.ndarray,
-    config: dict[str, Any],
-    rng: np.random.Generator,
-) -> np.ndarray:
-    amounts = np.zeros(
-        len(service_categories),
-        dtype=float,
-    )
-
-    global_noise_std = float(
-        config["claims"].get(
-            "claim_amount_noise_std",
-            0.0,
-        )
-    )
-
-    for service_name, service_cfg in config["services"].items():
-        mask = service_categories == service_name
-        count = int(mask.sum())
-
-        if count == 0:
-            continue
-
-        amount_cfg = service_cfg["amount"]
-
-        if amount_cfg["distribution"] != "lognormal":
-            raise ValueError(
-                f"Unsupported distribution for {service_name}: "
-                f"{amount_cfg['distribution']}"
-            )
-
-        median = float(amount_cfg["median"])
-        sigma = float(amount_cfg["sigma"])
-
-        raw = rng.lognormal(
-            mean=np.log(median),
-            sigma=sigma,
-            size=count,
-        )
-
-        if global_noise_std > 0:
-            noise = rng.normal(
-                loc=1.0,
-                scale=global_noise_std,
-                size=count,
-            )
-
-            raw *= np.clip(
-                noise,
-                0.5,
-                1.5,
-            )
-
-        raw = np.clip(
-            raw,
-            amount_cfg["min"],
-            amount_cfg["max"],
-        )
-
-        amounts[mask] = raw
-
-    return np.round(amounts, 2)
-
-
-def _generate_service_units(
-    service_categories: np.ndarray,
-    config: dict[str, Any],
-    rng: np.random.Generator,
-) -> np.ndarray:
-    units = np.zeros(
-        len(service_categories),
-        dtype=int,
-    )
-
-    for service_name, service_cfg in config["services"].items():
-        mask = service_categories == service_name
-
-        units[mask] = rng.integers(
-            service_cfg["units"]["min"],
-            service_cfg["units"]["max"] + 1,
-            size=int(mask.sum()),
-        )
-
-    return units
 
 
 def _generate_service_codes(
     service_categories: np.ndarray,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    codes_by_category = {
+    codes = {
         "consultation": [
             "CONS_GP",
             "CONS_SPEC",
@@ -553,19 +654,158 @@ def _generate_service_codes(
         ],
     }
 
-    result: list[str] = []
+    return np.asarray(
+        [
+            rng.choice(
+                codes[category]
+            )
+            for category
+            in service_categories
+        ]
+    )
 
-    for category in service_categories:
-        result.append(
-            rng.choice(codes_by_category[category])
+
+def _generate_claim_amounts(
+    service_categories: np.ndarray,
+    config: dict[str, Any],
+    rng: np.random.Generator,
+) -> np.ndarray:
+    amounts = np.zeros(
+        len(service_categories),
+        dtype=float,
+    )
+
+    noise_std = float(
+        config["claims"].get(
+            "claim_amount_noise_std",
+            0.0,
+        )
+    )
+
+    for (
+        service_name,
+        service_cfg,
+    ) in config[
+        "services"
+    ].items():
+
+        mask = (
+            service_categories
+            == service_name
         )
 
-    return np.asarray(result)
+        count = int(
+            mask.sum()
+        )
+
+        if count == 0:
+            continue
+
+        cfg = service_cfg[
+            "amount"
+        ]
+
+        if (
+            cfg["distribution"]
+            != "lognormal"
+        ):
+            raise ValueError(
+                "Unsupported distribution "
+                f"for {service_name}: "
+                f"{cfg['distribution']}"
+            )
+
+        raw = rng.lognormal(
+            mean=np.log(
+                float(
+                    cfg["median"]
+                )
+            ),
+            sigma=float(
+                cfg["sigma"]
+            ),
+            size=count,
+        )
+
+        if noise_std > 0:
+            multiplier = (
+                rng.normal(
+                    loc=1.0,
+                    scale=noise_std,
+                    size=count,
+                )
+            )
+
+            multiplier = np.clip(
+                multiplier,
+                0.5,
+                1.5,
+            )
+
+            raw *= multiplier
+
+        raw = np.clip(
+            raw,
+            cfg["min"],
+            cfg["max"],
+        )
+
+        amounts[mask] = raw
+
+    return np.round(
+        amounts,
+        2,
+    )
+
+
+def _generate_service_units(
+    service_categories: np.ndarray,
+    config: dict[str, Any],
+    rng: np.random.Generator,
+) -> np.ndarray:
+    units = np.zeros(
+        len(service_categories),
+        dtype=int,
+    )
+
+    for (
+        service_name,
+        service_cfg,
+    ) in config[
+        "services"
+    ].items():
+
+        mask = (
+            service_categories
+            == service_name
+        )
+
+        count = int(
+            mask.sum()
+        )
+
+        if count == 0:
+            continue
+
+        units[mask] = (
+            rng.integers(
+                service_cfg[
+                    "units"
+                ]["min"],
+                service_cfg[
+                    "units"
+                ]["max"] + 1,
+                size=count,
+            )
+        )
+
+    return units
 
 
 # =============================================================================
 # Entity sampling
 # =============================================================================
+
 
 def _sample_customer_indices(
     customers: pd.DataFrame,
@@ -574,38 +814,141 @@ def _sample_customer_indices(
 ) -> np.ndarray:
     weights = customers[
         "claim_frequency_multiplier"
-    ].to_numpy(dtype=float)
+    ].to_numpy(
+        dtype=float
+    )
 
     weights /= weights.sum()
 
     return rng.choice(
-        np.arange(len(customers)),
+        np.arange(
+            len(customers)
+        ),
         size=size,
         p=weights,
     )
+
+
+SERVICE_PROVIDER_TYPES = {
+    "consultation": {
+        "general_practitioner",
+        "specialist",
+    },
+    "dental": {
+        "dentist",
+    },
+    "optical": {
+        "optician",
+    },
+    "physiotherapy": {
+        "physiotherapist",
+    },
+    "pharmacy": {
+        "pharmacy",
+    },
+    "medical_device": {
+        "medical_supplier",
+        "pharmacy",
+    },
+    "diagnostic": {
+        "laboratory",
+        "specialist",
+    },
+    "other": {
+        "other",
+        "general_practitioner",
+        "specialist",
+    },
+}
 
 
 def _sample_provider_indices(
     providers: pd.DataFrame,
+    service_categories: np.ndarray,
     rng: np.random.Generator,
-    size: int,
 ) -> np.ndarray:
-    weights = providers[
-        "provider_volume_multiplier"
-    ].to_numpy(dtype=float)
+    """
+    Sample healthcare providers conditional on service type.
 
-    weights /= weights.sum()
+    This prevents unrealistic combinations such as
+    a dental crown being billed by a pharmacy.
+    """
 
-    return rng.choice(
-        np.arange(len(providers)),
-        size=size,
-        p=weights,
+    result = np.empty(
+        len(service_categories),
+        dtype=int,
     )
 
+    provider_types = providers[
+        "provider_type"
+    ].to_numpy()
+
+    provider_weights = providers[
+        "provider_volume_multiplier"
+    ].to_numpy(
+        dtype=float
+    )
+
+    for service in np.unique(
+        service_categories
+    ):
+        claim_mask = (
+            service_categories
+            == service
+        )
+
+        allowed_types = (
+            SERVICE_PROVIDER_TYPES[
+                service
+            ]
+        )
+
+        provider_mask = np.isin(
+            provider_types,
+            list(allowed_types),
+        )
+
+        candidate_indices = (
+            np.flatnonzero(
+                provider_mask
+            )
+        )
+
+        if len(
+            candidate_indices
+        ) == 0:
+            raise ValueError(
+                "No providers available "
+                f"for service {service}."
+            )
+
+        weights = (
+            provider_weights[
+                candidate_indices
+            ]
+        )
+
+        weights = (
+            weights / weights.sum()
+        )
+
+        result[
+            claim_mask
+        ] = rng.choice(
+            candidate_indices,
+            size=int(
+                claim_mask.sum()
+            ),
+            p=weights,
+        )
+
+    return result
+
 
 # =============================================================================
-# Core claims
+# Claims
 # =============================================================================
+
 
 def generate_claims(
     customers: pd.DataFrame,
@@ -614,459 +957,806 @@ def generate_claims(
     config: dict[str, Any],
     rng: np.random.Generator,
 ) -> pd.DataFrame:
-    n_claims = int(config["simulation"]["target_claims"])
-
-    customer_idx = _sample_customer_indices(
-        customers,
-        rng,
-        n_claims,
+    n_claims = int(
+        config["simulation"][
+            "target_claims"
+        ]
     )
 
-    provider_idx = _sample_provider_indices(
-        providers,
-        rng,
-        n_claims,
+    customer_idx = (
+        _sample_customer_indices(
+            customers=customers,
+            rng=rng,
+            size=n_claims,
+        )
     )
 
     selected_customers = (
         customers
         .iloc[customer_idx]
-        .reset_index(drop=True)
+        .reset_index(
+            drop=True
+        )
     )
 
     selected_policies = (
         policies
         .iloc[customer_idx]
-        .reset_index(drop=True)
+        .reset_index(
+            drop=True
+        )
+    )
+
+    service_category = (
+        _sample_service_categories(
+            config=config,
+            rng=rng,
+            size=n_claims,
+        )
+    )
+
+    provider_idx = (
+        _sample_provider_indices(
+            providers=providers,
+            service_categories=(
+                service_category
+            ),
+            rng=rng,
+        )
     )
 
     selected_providers = (
         providers
         .iloc[provider_idx]
-        .reset_index(drop=True)
+        .reset_index(
+            drop=True
+        )
     )
 
-    service_category = _sample_service_categories(
-        config,
-        rng,
-        n_claims,
+    service_code = (
+        _generate_service_codes(
+            service_categories=(
+                service_category
+            ),
+            rng=rng,
+        )
     )
 
-    service_code = _generate_service_codes(
-        service_category,
-        rng,
+    claim_amount = (
+        _generate_claim_amounts(
+            service_categories=(
+                service_category
+            ),
+            config=config,
+            rng=rng,
+        )
     )
 
-    claim_amount = _generate_claim_amounts(
-        service_category,
-        config,
-        rng,
+    service_units = (
+        _generate_service_units(
+            service_categories=(
+                service_category
+            ),
+            config=config,
+            rng=rng,
+        )
     )
 
-    service_units = _generate_service_units(
-        service_category,
-        config,
-        rng,
+    submission_timestamp = (
+        _generate_submission_dates(
+            config=config,
+            rng=rng,
+            size=n_claims,
+        )
     )
 
-    submission_timestamp = _generate_submission_dates(
-        config,
-        rng,
-        n_claims,
-    )
-
-    delay_cfg = config["claims"]["service_to_submission_days"]
+    delay_cfg = config[
+        "claims"
+    ][
+        "service_to_submission_days"
+    ]
 
     delays = rng.gamma(
-        shape=delay_cfg["shape"],
-        scale=delay_cfg["scale"],
+        shape=float(
+            delay_cfg["shape"]
+        ),
+        scale=float(
+            delay_cfg["scale"]
+        ),
         size=n_claims,
     )
 
     delays = np.minimum(
-        np.floor(delays).astype(int),
-        delay_cfg["max_days"],
+        np.floor(
+            delays
+        ).astype(int),
+        int(
+            delay_cfg[
+                "max_days"
+            ]
+        ),
     )
 
     service_date = (
-        submission_timestamp.dt.normalize()
-        - pd.to_timedelta(delays, unit="D")
+        submission_timestamp
+        .dt.normalize()
+        - pd.to_timedelta(
+            delays,
+            unit="D",
+        )
     )
 
-    channels = _sample_categories(
-        rng,
-        config["claims"]["submission_channels"],
-        n_claims,
-        "submission channels",
+    channels = (
+        _sample_categories(
+            rng=rng,
+            probabilities=config[
+                "claims"
+            ][
+                "submission_channels"
+            ],
+            size=n_claims,
+            name=(
+                "submission channels"
+            ),
+        )
     )
 
-    coverage_limit_cfg = config["policy"]["coverage_limits"]
+    coverage_cfg = config[
+        "policy"
+    ][
+        "coverage_limits"
+    ]
 
-    coverage_limit = np.array(
+    coverage_limits = np.asarray(
         [
-            coverage_limit_cfg[coverage][service]
-            for coverage, service in zip(
-                selected_policies["coverage_level"],
+            coverage_cfg[
+                coverage
+            ][
+                service
+            ]
+            for coverage, service
+            in zip(
+                selected_policies[
+                    "coverage_level"
+                ],
                 service_category,
             )
         ],
         dtype=float,
     )
 
-    base_reimbursement_rate = rng.beta(
-        a=8,
-        b=2,
-        size=n_claims,
+    reimbursement_rate = (
+        rng.beta(
+            a=8,
+            b=2,
+            size=n_claims,
+        )
     )
 
-    requested_reimbursement = np.minimum(
-        claim_amount * base_reimbursement_rate,
-        coverage_limit,
+    requested_reimbursement = (
+        np.minimum(
+            claim_amount
+            * reimbursement_rate,
+            coverage_limits,
+        )
     )
 
-    document_cfg = config["claims"]["document_count"]
+    document_cfg = config[
+        "claims"
+    ][
+        "document_count"
+    ]
 
-    document_count = rng.integers(
-        document_cfg["min"],
-        document_cfg["max"] + 1,
-        size=n_claims,
-    ).astype(float)
+    document_count = (
+        rng.integers(
+            document_cfg["min"],
+            document_cfg["max"]
+            + 1,
+            size=n_claims,
+        )
+        .astype(float)
+    )
 
     has_invoice = (
-        rng.random(n_claims)
-        < config["claims"]["has_invoice_probability"]
+        rng.random(
+            n_claims
+        )
+        < float(
+            config[
+                "claims"
+            ][
+                "has_invoice_probability"
+            ]
+        )
     )
 
-    prescription_probs = np.array(
-        [
-            config["claims"][
-                "has_prescription_probability"
-            ][service]
-            for service in service_category
-        ],
-        dtype=float,
+    prescription_probs = (
+        np.asarray(
+            [
+                config[
+                    "claims"
+                ][
+                    "has_prescription_probability"
+                ][service]
+                for service
+                in service_category
+            ],
+            dtype=float,
+        )
     )
 
     has_prescription = (
-        rng.random(n_claims)
+        rng.random(
+            n_claims
+        )
         < prescription_probs
     ).astype(object)
+
+    policy_start_dates = (
+        pd.to_datetime(
+            selected_policies[
+                "policy_start_date"
+            ]
+        )
+    )
+
+    policy_tenure_months = (
+        (
+            submission_timestamp
+            - policy_start_dates
+        )
+        .dt.days
+        .div(30.4375)
+        .clip(lower=1)
+        .astype(int)
+    )
+
+    # Claim-time policy change.
+    policy_cfg = config[
+        "policy"
+    ]
+
+    recent_policy_change = (
+        rng.random(
+            n_claims
+        )
+        < float(
+            policy_cfg[
+                "recent_change_probability"
+            ]
+        )
+    )
+
+    change_window = int(
+        policy_cfg[
+            "recent_change_window_days"
+        ]
+    )
+
+    days_since_policy_change = (
+        np.where(
+            recent_policy_change,
+            rng.integers(
+                1,
+                change_window + 1,
+                size=n_claims,
+            ),
+            np.nan,
+        )
+    )
 
     claims = pd.DataFrame(
         {
             "claim_id": [
                 f"CLM_{i:08d}"
-                for i in range(1, n_claims + 1)
+                for i in range(
+                    1,
+                    n_claims + 1,
+                )
             ],
-            "customer_id": selected_customers["customer_id"].to_numpy(),
-            "policy_id": selected_policies["policy_id"].to_numpy(),
-            "provider_id": selected_providers["provider_id"].to_numpy(),
-            "service_category": service_category,
-            "service_code": service_code,
-            "service_units": service_units,
-            "service_date": service_date,
-            "claim_submission_date": submission_timestamp.dt.normalize(),
-            "claim_submission_timestamp": submission_timestamp,
-            "claim_amount": claim_amount,
-            "requested_reimbursement": np.round(
-                requested_reimbursement,
-                2,
+
+            "customer_id": (
+                selected_customers[
+                    "customer_id"
+                ].to_numpy()
             ),
-            "coverage_limit": coverage_limit,
-            "submission_channel": channels,
-            "document_count": document_count,
-            "has_invoice": has_invoice,
-            "has_prescription": has_prescription,
-            "customer_age": selected_customers[
-                "customer_age"
-            ].to_numpy(),
-            "customer_tenure_months": selected_customers[
-                "customer_tenure_months"
-            ].to_numpy(),
-            "coverage_level": selected_customers[
-                "coverage_level"
-            ].to_numpy(),
-            "customer_behavior_segment": selected_customers[
-                "customer_behavior_segment"
-            ].to_numpy(),
-            "policy_tenure_months": selected_policies[
-                "policy_tenure_months"
-            ].to_numpy(),
-            "recent_policy_change": selected_policies[
-                "recent_policy_change"
-            ].to_numpy(),
-            "days_since_policy_change": selected_policies[
-                "days_since_policy_change"
-            ].to_numpy(),
-            "provider_type": selected_providers[
-                "provider_type"
-            ].to_numpy(),
-            "provider_region": selected_providers[
-                "provider_region"
-            ].to_numpy(),
-            "provider_tenure_months": selected_providers[
-                "provider_tenure_months"
-            ].to_numpy(),
-            "provider_behavior_segment": selected_providers[
-                "provider_behavior_segment"
-            ].to_numpy(),
+
+            "policy_id": (
+                selected_policies[
+                    "policy_id"
+                ].to_numpy()
+            ),
+
+            "provider_id": (
+                selected_providers[
+                    "provider_id"
+                ].to_numpy()
+            ),
+
+            "service_category": (
+                service_category
+            ),
+
+            "service_code": (
+                service_code
+            ),
+
+            "service_units": (
+                service_units
+            ),
+
+            "service_date": (
+                service_date
+            ),
+
+            "claim_submission_date": (
+                submission_timestamp
+                .dt.normalize()
+            ),
+
+            "claim_submission_timestamp": (
+                submission_timestamp
+            ),
+
+            "claim_amount": (
+                claim_amount
+            ),
+
+            "requested_reimbursement": (
+                np.round(
+                    requested_reimbursement,
+                    2,
+                )
+            ),
+
+            "coverage_limit": (
+                coverage_limits
+            ),
+
+            "submission_channel": (
+                channels
+            ),
+
+            "document_count": (
+                document_count
+            ),
+
+            "has_invoice": (
+                has_invoice
+            ),
+
+            "has_prescription": (
+                has_prescription
+            ),
+
+            "customer_age": (
+                selected_customers[
+                    "customer_age"
+                ].to_numpy()
+            ),
+
+            "customer_tenure_months": (
+                selected_customers[
+                    "customer_tenure_months"
+                ].to_numpy()
+            ),
+
+            "coverage_level": (
+                selected_customers[
+                    "coverage_level"
+                ].to_numpy()
+            ),
+
+            "customer_behavior_segment": (
+                selected_customers[
+                    "customer_behavior_segment"
+                ].to_numpy()
+            ),
+
+            "policy_tenure_months": (
+                policy_tenure_months
+                .to_numpy()
+            ),
+
+            "recent_policy_change": (
+                recent_policy_change
+            ),
+
+            "days_since_policy_change": (
+                days_since_policy_change
+            ),
+
+            "provider_type": (
+                selected_providers[
+                    "provider_type"
+                ].to_numpy()
+            ),
+
+            "provider_region": (
+                selected_providers[
+                    "provider_region"
+                ].to_numpy()
+            ),
+
+            "provider_tenure_months": (
+                selected_providers[
+                    "provider_tenure_months"
+                ].to_numpy()
+            ),
+
+            "provider_behavior_segment": (
+                selected_providers[
+                    "provider_behavior_segment"
+                ].to_numpy()
+            ),
         }
     )
 
-    claims["days_service_to_submission"] = (
-        claims["claim_submission_date"]
-        - claims["service_date"]
+    claims[
+        "days_service_to_submission"
+    ] = (
+        claims[
+            "claim_submission_date"
+        ]
+        - claims[
+            "service_date"
+        ]
     ).dt.days
 
-    claims["reimbursement_ratio"] = (
-        claims["requested_reimbursement"]
-        / claims["claim_amount"]
-    ).clip(0, 1)
+    claims[
+        "reimbursement_ratio"
+    ] = (
+        claims[
+            "requested_reimbursement"
+        ]
+        / claims[
+            "claim_amount"
+        ]
+    ).clip(
+        0,
+        1,
+    )
 
     claims = (
         claims
-        .sort_values("claim_submission_timestamp")
-        .reset_index(drop=True)
+        .sort_values(
+            "claim_submission_timestamp"
+        )
+        .reset_index(
+            drop=True
+        )
     )
 
     return claims
 
 
 # =============================================================================
-# Historical feature generation
+# Historical features
 # =============================================================================
+
+
+def _rolling_feature(
+    df: pd.DataFrame,
+    group_columns: str | list[str],
+    value_column: str,
+    window: str,
+    aggregation: str,
+) -> pd.Series:
+    """
+    Compute a strict-past rolling feature while preserving
+    the original dataframe row indexes.
+    """
+
+    output = pd.Series(
+        index=df.index,
+        dtype=float,
+    )
+
+    grouped = df.groupby(
+        group_columns,
+        sort=False,
+        dropna=False,
+    )
+
+    for _, group in grouped:
+        ordered = (
+            group
+            .sort_values(
+                "claim_submission_timestamp"
+            )
+        )
+
+        values = (
+            ordered
+            .set_index(
+                "claim_submission_timestamp"
+            )[value_column]
+            .rolling(
+                window,
+                closed="left",
+            )
+        )
+
+        if aggregation == "count":
+            result = (
+                values.count()
+            )
+
+        elif aggregation == "sum":
+            result = (
+                values.sum()
+            )
+
+        elif aggregation == "mean":
+            result = (
+                values.mean()
+            )
+
+        elif aggregation == "median":
+            result = (
+                values.median()
+            )
+
+        else:
+            raise ValueError(
+                "Unsupported rolling "
+                f"aggregation: {aggregation}"
+            )
+
+        output.loc[
+            ordered.index
+        ] = result.to_numpy()
+
+    return output
+
 
 def add_historical_features(
     claims: pd.DataFrame,
+    config: dict[str, Any],
 ) -> pd.DataFrame:
-    df = claims.copy()
-
-    df = df.sort_values(
-        "claim_submission_timestamp"
-    ).reset_index(drop=True)
-
-    timestamp = "claim_submission_timestamp"
-
-    # -------------------------------------------------------------------------
-    # Customer history
-    # -------------------------------------------------------------------------
-
-    for window in [7, 30, 90, 365]:
-        count_col = f"customer_claims_{window}d"
-
-        df[count_col] = (
-            df.groupby("customer_id", group_keys=False)
-            .apply(
-                lambda group: (
-                    group.set_index(timestamp)["claim_id"]
-                    .rolling(
-                        f"{window}D",
-                        closed="left",
-                    )
-                    .count()
-                    .reset_index(drop=True)
-                ),
-                include_groups=False,
-            )
-            .reset_index(drop=True)
+    df = (
+        claims
+        .sort_values(
+            "claim_submission_timestamp"
         )
-
-    df["customer_amount_30d"] = (
-        df.groupby("customer_id", group_keys=False)
-        .apply(
-            lambda group: (
-                group.set_index(timestamp)["claim_amount"]
-                .rolling("30D", closed="left")
-                .sum()
-                .reset_index(drop=True)
-            ),
-            include_groups=False,
+        .reset_index(
+            drop=True
         )
-        .reset_index(drop=True)
+        .copy()
     )
 
-    df["customer_amount_365d"] = (
-        df.groupby("customer_id", group_keys=False)
-        .apply(
-            lambda group: (
-                group.set_index(timestamp)["claim_amount"]
-                .rolling("365D", closed="left")
-                .sum()
-                .reset_index(drop=True)
-            ),
-            include_groups=False,
+    # Customer counts.
+    for window in (
+        7,
+        30,
+        90,
+        365,
+    ):
+        df[
+            f"customer_claims_{window}d"
+        ] = _rolling_feature(
+            df=df,
+            group_columns="customer_id",
+            value_column="claim_id",
+            window=f"{window}D",
+            aggregation="count",
         )
-        .reset_index(drop=True)
+
+    df[
+        "customer_amount_30d"
+    ] = _rolling_feature(
+        df=df,
+        group_columns="customer_id",
+        value_column="claim_amount",
+        window="30D",
+        aggregation="sum",
     )
 
-    df["customer_avg_claim_amount_365d"] = (
-        df.groupby("customer_id", group_keys=False)
-        .apply(
-            lambda group: (
-                group.set_index(timestamp)["claim_amount"]
-                .rolling("365D", closed="left")
-                .mean()
-                .reset_index(drop=True)
-            ),
-            include_groups=False,
-        )
-        .reset_index(drop=True)
+    df[
+        "customer_amount_365d"
+    ] = _rolling_feature(
+        df=df,
+        group_columns="customer_id",
+        value_column="claim_amount",
+        window="365D",
+        aggregation="sum",
     )
 
-    # -------------------------------------------------------------------------
-    # Previous-claim timings
-    # -------------------------------------------------------------------------
+    df[
+        "customer_avg_claim_amount_365d"
+    ] = _rolling_feature(
+        df=df,
+        group_columns="customer_id",
+        value_column="claim_amount",
+        window="365D",
+        aggregation="mean",
+    )
 
-    df["days_since_customer_previous_claim"] = (
-        df.groupby("customer_id")[timestamp]
+    # Previous customer claim.
+    df[
+        "days_since_customer_previous_claim"
+    ] = (
+        df.groupby(
+            "customer_id"
+        )[
+            "claim_submission_timestamp"
+        ]
         .diff()
         .dt.total_seconds()
         .div(86400)
     )
 
-    df["days_since_same_provider_claim"] = (
+    # Customer-provider history.
+    df[
+        "days_since_same_provider_claim"
+    ] = (
         df.groupby(
-            ["customer_id", "provider_id"]
-        )[timestamp]
+            [
+                "customer_id",
+                "provider_id",
+            ]
+        )[
+            "claim_submission_timestamp"
+        ]
         .diff()
         .dt.total_seconds()
         .div(86400)
     )
 
-    # -------------------------------------------------------------------------
-    # Pair interaction counts
-    # -------------------------------------------------------------------------
+    df[
+        "customer_provider_claims_30d"
+    ] = _rolling_feature(
+        df=df,
+        group_columns=[
+            "customer_id",
+            "provider_id",
+        ],
+        value_column="claim_id",
+        window="30D",
+        aggregation="count",
+    )
 
-    df["customer_provider_claims_30d"] = (
+    # Customer / service.
+    df[
+        "same_service_claims_30d"
+    ] = _rolling_feature(
+        df=df,
+        group_columns=[
+            "customer_id",
+            "service_category",
+        ],
+        value_column="claim_id",
+        window="30D",
+        aggregation="count",
+    )
+
+    # Provider.
+    df[
+        "provider_claims_30d"
+    ] = _rolling_feature(
+        df=df,
+        group_columns="provider_id",
+        value_column="claim_id",
+        window="30D",
+        aggregation="count",
+    )
+
+    df[
+        "provider_claims_90d"
+    ] = _rolling_feature(
+        df=df,
+        group_columns="provider_id",
+        value_column="claim_id",
+        window="90D",
+        aggregation="count",
+    )
+
+    df[
+        "provider_avg_claim_amount_90d"
+    ] = _rolling_feature(
+        df=df,
+        group_columns="provider_id",
+        value_column="claim_amount",
+        window="90D",
+        aggregation="mean",
+    )
+
+    # ---------------------------------------------------------
+    # Service baseline
+    #
+    # IMPORTANT:
+    # never use a full-dataset median here because that would
+    # contain future information.
+    # ---------------------------------------------------------
+
+    historical_service_median = (
         df.groupby(
-            ["customer_id", "provider_id"],
-            group_keys=False,
-        )
-        .apply(
-            lambda group: (
-                group.set_index(timestamp)["claim_id"]
-                .rolling("30D", closed="left")
-                .count()
-                .reset_index(drop=True)
-            ),
-            include_groups=False,
-        )
-        .reset_index(drop=True)
-    )
-
-    # -------------------------------------------------------------------------
-    # Provider history
-    # -------------------------------------------------------------------------
-
-    df["provider_claims_30d"] = (
-        df.groupby("provider_id", group_keys=False)
-        .apply(
-            lambda group: (
-                group.set_index(timestamp)["claim_id"]
-                .rolling("30D", closed="left")
-                .count()
-                .reset_index(drop=True)
-            ),
-            include_groups=False,
-        )
-        .reset_index(drop=True)
-    )
-
-    df["provider_claims_90d"] = (
-        df.groupby("provider_id", group_keys=False)
-        .apply(
-            lambda group: (
-                group.set_index(timestamp)["claim_id"]
-                .rolling("90D", closed="left")
-                .count()
-                .reset_index(drop=True)
-            ),
-            include_groups=False,
-        )
-        .reset_index(drop=True)
-    )
-
-    df["provider_avg_claim_amount_90d"] = (
-        df.groupby("provider_id", group_keys=False)
-        .apply(
-            lambda group: (
-                group.set_index(timestamp)["claim_amount"]
-                .rolling("90D", closed="left")
-                .mean()
-                .reset_index(drop=True)
-            ),
-            include_groups=False,
-        )
-        .reset_index(drop=True)
-    )
-
-    # -------------------------------------------------------------------------
-    # Same-service history
-    # -------------------------------------------------------------------------
-
-    df["same_service_claims_30d"] = (
-        df.groupby(
-            ["customer_id", "service_category"],
-            group_keys=False,
-        )
-        .apply(
-            lambda group: (
-                group.set_index(timestamp)["claim_id"]
-                .rolling("30D", closed="left")
-                .count()
-                .reset_index(drop=True)
-            ),
-            include_groups=False,
-        )
-        .reset_index(drop=True)
-    )
-
-    # -------------------------------------------------------------------------
-    # Service baselines
-    # -------------------------------------------------------------------------
-
-    expanding_median = (
-        df.groupby("service_code")["claim_amount"]
+            "service_code"
+        )[
+            "claim_amount"
+        ]
         .transform(
-            lambda x: x.shift(1).expanding().median()
+            lambda series:
+            series
+            .shift(1)
+            .expanding()
+            .median()
         )
     )
 
-    service_fallback = (
-        df.groupby("service_code")["claim_amount"]
-        .transform("median")
+    configured_service_prior = {
+        service: float(
+            cfg["amount"]["median"]
+        )
+        for service, cfg
+        in config["services"].items()
+    }
+
+    service_prior = (
+        df[
+            "service_category"
+        ]
+        .map(
+            configured_service_prior
+        )
+        .astype(float)
     )
 
-    df["service_typical_amount"] = (
-        expanding_median
-        .fillna(service_fallback)
+    df[
+        "service_typical_amount"
+    ] = (
+        historical_service_median
+        .fillna(
+            service_prior
+        )
     )
 
-    df["claim_to_service_median_ratio"] = (
+    df[
+        "claim_to_service_median_ratio"
+    ] = (
         df["claim_amount"]
-        / df["service_typical_amount"]
+        / df[
+            "service_typical_amount"
+        ]
     )
 
-    df["claim_to_customer_avg_ratio"] = (
+    df[
+        "claim_to_customer_avg_ratio"
+    ] = (
         df["claim_amount"]
-        / df["customer_avg_claim_amount_365d"]
+        / df[
+            "customer_avg_claim_amount_365d"
+        ]
     )
 
-    df["claim_to_provider_avg_ratio"] = (
+    df[
+        "claim_to_provider_avg_ratio"
+    ] = (
         df["claim_amount"]
-        / df["provider_avg_claim_amount_90d"]
+        / df[
+            "provider_avg_claim_amount_90d"
+        ]
     )
 
-    # Prevent infinities.
-    ratio_cols = [
+    ratio_columns = [
         "claim_to_service_median_ratio",
         "claim_to_customer_avg_ratio",
         "claim_to_provider_avg_ratio",
     ]
 
-    df[ratio_cols] = (
-        df[ratio_cols]
-        .replace([np.inf, -np.inf], np.nan)
+    df[
+        ratio_columns
+    ] = (
+        df[
+            ratio_columns
+        ]
+        .replace(
+            [
+                np.inf,
+                -np.inf,
+            ],
+            np.nan,
+        )
     )
 
     return df
@@ -1076,64 +1766,169 @@ def add_historical_features(
 # Legitimate anomalies
 # =============================================================================
 
+
 def add_legitimate_anomalies(
     claims: pd.DataFrame,
     config: dict[str, Any],
     rng: np.random.Generator,
 ) -> pd.DataFrame:
+    """
+    Mark naturally unusual legitimate-looking observations.
+
+    We deliberately do not mutate historical aggregates:
+    that would make the synthetic data internally inconsistent.
+
+    These rows become hard negatives during target generation.
+    """
+
     df = claims.copy()
 
-    cfg = config["legitimate_anomalies"]
+    cfg = config[
+        "legitimate_anomalies"
+    ]
 
-    if not cfg.get("enabled", False):
-        df["legitimate_anomaly"] = False
-        df["legitimate_anomaly_type"] = "none"
+    df[
+        "legitimate_anomaly"
+    ] = False
+
+    df[
+        "legitimate_anomaly_type"
+    ] = "none"
+
+    if not cfg.get(
+        "enabled",
+        False,
+    ):
         return df
 
-    prevalence = float(cfg["prevalence"])
-
-    anomaly_mask = (
-        rng.random(len(df))
-        < prevalence
+    n_target = int(
+        round(
+            len(df)
+            * float(
+                cfg["prevalence"]
+            )
+        )
     )
 
-    df["legitimate_anomaly"] = anomaly_mask
-    df["legitimate_anomaly_type"] = "none"
-
-    pattern_probs = cfg["patterns"]
-
-    anomaly_indices = np.flatnonzero(anomaly_mask)
-
-    if len(anomaly_indices) == 0:
+    if n_target <= 0:
         return df
 
-    anomaly_types = _sample_categories(
-        rng,
-        pattern_probs,
-        len(anomaly_indices),
-        "legitimate anomaly patterns",
+    amount_signal = (
+        df[
+            "claim_to_service_median_ratio"
+        ]
+        .fillna(1.0)
+        .clip(lower=1.0)
+        .to_numpy()
+        - 1.0
+    )
+
+    frequency_signal = (
+        df[
+            "customer_claims_30d"
+        ]
+        .fillna(0)
+        .to_numpy(
+            dtype=float
+        )
+    )
+
+    provider_signal = (
+        df[
+            "provider_claims_30d"
+        ]
+        .fillna(0)
+        .to_numpy(
+            dtype=float
+        )
+    )
+
+    repeated_signal = (
+        df[
+            "same_service_claims_30d"
+        ]
+        .fillna(0)
+        .to_numpy(
+            dtype=float
+        )
+    )
+
+    amount_signal = (
+        _normalize_positive_signal(
+            amount_signal
+        )
+    )
+
+    frequency_signal = (
+        _normalize_positive_signal(
+            frequency_signal
+        )
+    )
+
+    provider_signal = (
+        _normalize_positive_signal(
+            provider_signal
+        )
+    )
+
+    repeated_signal = (
+        _normalize_positive_signal(
+            repeated_signal
+        )
+    )
+
+    combined = (
+        0.30 * amount_signal
+        + 0.30 * frequency_signal
+        + 0.20 * provider_signal
+        + 0.20 * repeated_signal
+        + 0.05
+    )
+
+    probability = (
+        combined
+        / combined.sum()
+    )
+
+    selected = rng.choice(
+        np.arange(
+            len(df)
+        ),
+        size=min(
+            n_target,
+            len(df),
+        ),
+        replace=False,
+        p=probability,
+    )
+
+    pattern_probabilities = cfg[
+        "patterns"
+    ]
+
+    anomaly_types = (
+        _sample_categories(
+            rng=rng,
+            probabilities=(
+                pattern_probabilities
+            ),
+            size=len(selected),
+            name=(
+                "legitimate anomaly "
+                "patterns"
+            ),
+        )
     )
 
     df.loc[
-        anomaly_indices,
+        selected,
+        "legitimate_anomaly",
+    ] = True
+
+    df.loc[
+        selected,
         "legitimate_anomaly_type",
     ] = anomaly_types
-
-    for idx, anomaly_type in zip(
-        anomaly_indices,
-        anomaly_types,
-    ):
-        if anomaly_type == "high_amount_legitimate":
-            df.loc[idx, "claim_amount"] *= rng.uniform(1.8, 3.5)
-
-        elif anomaly_type == "high_frequency_legitimate":
-            df.loc[idx, "customer_claims_30d"] += rng.integers(3, 8)
-
-        elif anomaly_type == "unusual_provider_legitimate":
-            df.loc[idx, "provider_claims_30d"] += rng.integers(10, 30)
-
-        elif anomaly_type == "repeated_service_legitimate":
-            df.loc[idx, "same_service_claims_30d"] += rng.integers(2, 6)
 
     return df
 
@@ -1142,6 +1937,259 @@ def add_legitimate_anomalies(
 # Fraud generation
 # =============================================================================
 
+
+def _calibrate_probability_mean(
+    latent_without_intercept: np.ndarray,
+    target_mean: float,
+    minimum_probability: float,
+    maximum_probability: float,
+) -> tuple[
+    np.ndarray,
+    float,
+]:
+    """
+    Find an intercept through binary search so the mean
+    predicted synthetic fraud probability matches the target.
+    """
+
+    low = -20.0
+    high = 5.0
+
+    for _ in range(
+        100
+    ):
+        intercept = (
+            low + high
+        ) / 2.0
+
+        probabilities = (
+            _sigmoid(
+                latent_without_intercept
+                + intercept
+            )
+        )
+
+        probabilities = np.clip(
+            probabilities,
+            minimum_probability,
+            maximum_probability,
+        )
+
+        mean_probability = float(
+            probabilities.mean()
+        )
+
+        if (
+            mean_probability
+            < target_mean
+        ):
+            low = intercept
+        else:
+            high = intercept
+
+    intercept = (
+        low + high
+    ) / 2.0
+
+    probabilities = np.clip(
+        _sigmoid(
+            latent_without_intercept
+            + intercept
+        ),
+        minimum_probability,
+        maximum_probability,
+    )
+
+    return (
+        probabilities,
+        intercept,
+    )
+
+
+def _sample_fraud_mechanisms(
+    df: pd.DataFrame,
+    target: np.ndarray,
+    signals: dict[
+        str,
+        np.ndarray,
+    ],
+    config: dict[str, Any],
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """
+    Assign a synthetic ground-truth mechanism to positive
+    fraud cases.
+
+    Propensities depend both on configured mechanism weights
+    and observed signal intensity.
+
+    This prevents one mechanism from trivially accounting
+    for ~90% of fraud.
+    """
+
+    result = np.full(
+        len(df),
+        "none",
+        dtype=object,
+    )
+
+    fraud_indices = np.flatnonzero(
+        target == 1
+    )
+
+    if len(
+        fraud_indices
+    ) == 0:
+        return result
+
+    mechanisms_cfg = config[
+        "fraud"
+    ][
+        "mechanisms"
+    ]
+
+    base_names = [
+        "frequency_abuse",
+        "amount_inflation",
+        "repeated_service",
+        "provider_abnormality",
+        "customer_provider_pattern",
+    ]
+
+    mechanism_names = (
+        base_names
+        + ["mixed_pattern"]
+    )
+
+    propensities = []
+
+    for mechanism in base_names:
+        base_weight = float(
+            mechanisms_cfg[
+                mechanism
+            ][
+                "prevalence_weight"
+            ]
+        )
+
+        signal = signals[
+            mechanism
+        ][
+            fraud_indices
+        ]
+
+        # Every mechanism remains possible,
+        # while stronger evidence increases
+        # its assignment probability.
+        propensity = (
+            base_weight
+            * (
+                0.40
+                + signal
+            )
+        )
+
+        propensities.append(
+            propensity
+        )
+
+    stacked_base = np.column_stack(
+        [
+            signals[name][
+                fraud_indices
+            ]
+            for name in base_names
+        ]
+    )
+
+    sorted_signals = np.sort(
+        stacked_base,
+        axis=1,
+    )
+
+    strongest_two = (
+        sorted_signals[
+            :,
+            -1
+        ]
+        + sorted_signals[
+            :,
+            -2
+        ]
+    )
+
+    mixed_weight = float(
+        mechanisms_cfg[
+            "mixed_pattern"
+        ][
+            "prevalence_weight"
+        ]
+    )
+
+    mixed_propensity = (
+        mixed_weight
+        * (
+            0.50
+            + strongest_two
+        )
+    )
+
+    propensities.append(
+        mixed_propensity
+    )
+
+    propensity_matrix = (
+        np.column_stack(
+            propensities
+        )
+    )
+
+    propensity_matrix = (
+        propensity_matrix
+        / propensity_matrix.sum(
+            axis=1,
+            keepdims=True,
+        )
+    )
+
+    cumulative = np.cumsum(
+        propensity_matrix,
+        axis=1,
+    )
+
+    draws = rng.random(
+        len(fraud_indices)
+    )
+
+    selected_position = (
+        (
+            draws[
+                :,
+                None
+            ]
+            > cumulative
+        )
+        .sum(
+            axis=1
+        )
+    )
+
+    selected_mechanism = (
+        np.asarray(
+            mechanism_names,
+            dtype=object,
+        )[
+            selected_position
+        ]
+    )
+
+    result[
+        fraud_indices
+    ] = selected_mechanism
+
+    return result
+
+
 def add_fraud_target(
     claims: pd.DataFrame,
     config: dict[str, Any],
@@ -1149,316 +2197,596 @@ def add_fraud_target(
 ) -> pd.DataFrame:
     df = claims.copy()
 
-    cfg = config["fraud"]
-    thresholds = cfg["thresholds"]
+    fraud_cfg = config[
+        "fraud"
+    ]
+
+    thresholds = fraud_cfg[
+        "thresholds"
+    ]
 
     n = len(df)
 
-    # -------------------------------------------------------------------------
-    # Individual fraud signals
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------
+    # Raw risk signals
+    # ---------------------------------------------------------
 
-    frequency_signal = np.maximum(
+    frequency_raw = np.maximum(
         (
-            df["customer_claims_30d"].fillna(0).to_numpy()
-            - thresholds["high_recent_claims_30d"]
-        )
-        / 3.0,
-        0,
-    )
-
-    amount_signal = np.maximum(
-        (
-            df["claim_to_service_median_ratio"].fillna(1).to_numpy()
-            - thresholds["high_claim_to_service_ratio"]
+            df[
+                "customer_claims_30d"
+            ]
+            .fillna(0)
+            .to_numpy(
+                dtype=float
+            )
+            - float(
+                thresholds[
+                    "high_recent_claims_30d"
+                ]
+            )
         ),
         0,
     )
 
-    repeated_service_signal = np.maximum(
+    amount_raw = np.maximum(
         (
-            df["same_service_claims_30d"].fillna(0).to_numpy()
-            - thresholds["high_same_service_claims_30d"]
-        )
-        / 2.0,
+            df[
+                "claim_to_service_median_ratio"
+            ]
+            .fillna(1.0)
+            .to_numpy(
+                dtype=float
+            )
+            - float(
+                thresholds[
+                    "high_claim_to_service_ratio"
+                ]
+            )
+        ),
+        0,
+    )
+
+    repeated_raw = np.maximum(
+        (
+            df[
+                "same_service_claims_30d"
+            ]
+            .fillna(0)
+            .to_numpy(
+                dtype=float
+            )
+            - float(
+                thresholds[
+                    "high_same_service_claims_30d"
+                ]
+            )
+        ),
         0,
     )
 
     provider_recent = (
-        df["provider_claims_30d"]
+        df[
+            "provider_claims_30d"
+        ]
         .fillna(0)
-        .to_numpy(dtype=float)
+        .to_numpy(
+            dtype=float
+        )
     )
 
-    provider_long = (
-        df["provider_claims_90d"]
+    provider_90 = (
+        df[
+            "provider_claims_90d"
+        ]
         .fillna(0)
-        .to_numpy(dtype=float)
+        .to_numpy(
+            dtype=float
+        )
     )
 
-    expected_30d = provider_long / 3.0
+    expected_30 = (
+        provider_90 / 3.0
+    )
 
     provider_growth = (
-        provider_recent + 1
+        provider_recent
+        + 1.0
     ) / (
-        expected_30d + 1
+        expected_30
+        + 1.0
     )
 
-    provider_signal = np.maximum(
+    provider_raw = np.maximum(
         provider_growth
-        - thresholds["high_provider_growth_ratio"],
-        0,
-    )
-
-    pair_signal = np.maximum(
-        (
-            df["customer_provider_claims_30d"]
-            .fillna(0)
-            .to_numpy()
-            - thresholds["high_customer_provider_claims_30d"]
+        - float(
+            thresholds[
+                "high_provider_growth_ratio"
+            ]
         ),
         0,
     )
 
-    # -------------------------------------------------------------------------
-    # Fraud difficulty
-    # -------------------------------------------------------------------------
-
-    difficulty = _sample_categories(
-        rng,
-        cfg["difficulty_mix"],
-        n,
-        "fraud difficulty mix",
+    pair_raw = np.maximum(
+        (
+            df[
+                "customer_provider_claims_30d"
+            ]
+            .fillna(0)
+            .to_numpy(
+                dtype=float
+            )
+            - float(
+                thresholds[
+                    "high_customer_provider_claims_30d"
+                ]
+            )
+        ),
+        0,
     )
 
-    mechanisms = cfg["mechanisms"]
+    # ---------------------------------------------------------
+    # Normalize each mechanism independently.
+    #
+    # This is the key fix preventing count-based signals from
+    # numerically overwhelming the other fraud mechanisms.
+    # ---------------------------------------------------------
 
-    def strength(
-        mechanism: str,
-    ) -> np.ndarray:
-        levels = mechanisms[mechanism]["signal_strength"]
+    frequency_signal = (
+        _normalize_positive_signal(
+            np.log1p(
+                frequency_raw
+            )
+        )
+    )
 
-        return np.array(
+    amount_signal = (
+        _normalize_positive_signal(
+            np.log1p(
+                amount_raw
+            )
+        )
+    )
+
+    repeated_signal = (
+        _normalize_positive_signal(
+            np.log1p(
+                repeated_raw
+            )
+        )
+    )
+
+    provider_signal = (
+        _normalize_positive_signal(
+            np.log1p(
+                provider_raw
+            )
+        )
+    )
+
+    pair_signal = (
+        _normalize_positive_signal(
+            np.log1p(
+                pair_raw
+            )
+        )
+    )
+
+    signals = {
+        "frequency_abuse": (
+            frequency_signal
+        ),
+        "amount_inflation": (
+            amount_signal
+        ),
+        "repeated_service": (
+            repeated_signal
+        ),
+        "provider_abnormality": (
+            provider_signal
+        ),
+        "customer_provider_pattern": (
+            pair_signal
+        ),
+    }
+
+    # ---------------------------------------------------------
+    # Difficulty
+    # ---------------------------------------------------------
+
+    difficulty = (
+        _sample_categories(
+            rng=rng,
+            probabilities=fraud_cfg[
+                "difficulty_mix"
+            ],
+            size=n,
+            name="fraud difficulty mix",
+        )
+    )
+
+    mechanisms_cfg = fraud_cfg[
+        "mechanisms"
+    ]
+
+    contribution_arrays: dict[
+        str,
+        np.ndarray,
+    ] = {}
+
+    for (
+        mechanism,
+        signal,
+    ) in signals.items():
+
+        cfg = mechanisms_cfg[
+            mechanism
+        ]
+
+        strengths = cfg[
+            "signal_strength"
+        ]
+
+        row_strength = np.asarray(
             [
-                levels[level]
-                for level in difficulty
+                float(
+                    strengths[level]
+                )
+                for level
+                in difficulty
             ],
             dtype=float,
         )
 
-    latent = np.full(
+        prevalence_weight = float(
+            cfg[
+                "prevalence_weight"
+            ]
+        )
+
+        contribution_arrays[
+            mechanism
+        ] = (
+            prevalence_weight
+            * row_strength
+            * signal
+        )
+
+    # ---------------------------------------------------------
+    # Concept drift by mechanism
+    # ---------------------------------------------------------
+
+    drift_cfg = config[
+        "concept_drift"
+    ]
+
+    if drift_cfg.get(
+        "enabled",
+        False,
+    ):
+        drift_start = pd.Timestamp(
+            drift_cfg[
+                "start_date"
+            ]
+        )
+
+        drift_mask = (
+            df[
+                "claim_submission_timestamp"
+            ]
+            >= drift_start
+        ).to_numpy()
+
+        for mechanism, drift_spec in (
+            drift_cfg[
+                "mechanisms"
+            ].items()
+        ):
+            if (
+                mechanism
+                in contribution_arrays
+            ):
+                multiplier = float(
+                    drift_spec[
+                        "multiplier"
+                    ]
+                )
+
+                contribution_arrays[
+                    mechanism
+                ][drift_mask] *= (
+                    multiplier
+                )
+
+    # ---------------------------------------------------------
+    # Combine mechanism contributions
+    # ---------------------------------------------------------
+
+    latent = np.zeros(
         n,
-        np.log(
-            cfg["base_rate"]
-            / (1 - cfg["base_rate"])
-        ),
         dtype=float,
     )
 
-    latent += strength("frequency_abuse") * frequency_signal
-    latent += strength("amount_inflation") * amount_signal
-    latent += strength("repeated_service") * repeated_service_signal
-    latent += strength("provider_abnormality") * provider_signal
-    latent += strength("customer_provider_pattern") * pair_signal
+    for contribution in (
+        contribution_arrays.values()
+    ):
+        latent += contribution
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------
     # Interactions
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------
 
-    if cfg["interactions"].get("enabled", False):
-        interactions = cfg["interactions"]["definitions"]
+    interaction_cfg = (
+        fraud_cfg[
+            "interactions"
+        ]
+    )
+
+    if interaction_cfg.get(
+        "enabled",
+        False,
+    ):
+        definitions = (
+            interaction_cfg[
+                "definitions"
+            ]
+        )
 
         latent += (
-            interactions["amount_and_frequency"]["weight"]
+            float(
+                definitions[
+                    "amount_and_frequency"
+                ]["weight"]
+            )
             * amount_signal
             * frequency_signal
         )
 
         latent += (
-            interactions["provider_and_customer"]["weight"]
+            float(
+                definitions[
+                    "provider_and_customer"
+                ]["weight"]
+            )
             * provider_signal
             * pair_signal
         )
 
         latent += (
-            interactions["repeated_service_and_amount"]["weight"]
-            * repeated_service_signal
+            float(
+                definitions[
+                    "repeated_service_and_amount"
+                ]["weight"]
+            )
+            * repeated_signal
             * amount_signal
         )
 
         policy_signal = (
-            df["recent_policy_change"]
+            df[
+                "recent_policy_change"
+            ]
             .fillna(False)
             .astype(float)
             .to_numpy()
         )
 
         latent += (
-            interactions["policy_change_and_high_amount"]["weight"]
+            float(
+                definitions[
+                    "policy_change_and_high_amount"
+                ]["weight"]
+            )
             * policy_signal
             * amount_signal
         )
 
-    # -------------------------------------------------------------------------
-    # Concept drift
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------
+    # Legitimate anomalies = hard negatives
+    # ---------------------------------------------------------
 
-    drift_cfg = config["concept_drift"]
+    legitimate_anomaly = (
+        df[
+            "legitimate_anomaly"
+        ]
+        .fillna(False)
+        .to_numpy(
+            dtype=bool
+        )
+    )
 
-    if drift_cfg.get("enabled", False):
+    latent[
+        legitimate_anomaly
+    ] -= 1.75
+
+    # ---------------------------------------------------------
+    # Concept drift prevalence shift
+    # ---------------------------------------------------------
+
+    if drift_cfg.get(
+        "enabled",
+        False,
+    ):
         drift_start = pd.Timestamp(
-            drift_cfg["start_date"]
+            drift_cfg[
+                "start_date"
+            ]
         )
 
         drift_mask = (
-            df["claim_submission_timestamp"]
+            df[
+                "claim_submission_timestamp"
+            ]
             >= drift_start
         ).to_numpy()
 
-        prevalence_multiplier = float(
-            drift_cfg["prevalence_multiplier"]
+        latent[
+            drift_mask
+        ] += np.log(
+            float(
+                drift_cfg[
+                    "prevalence_multiplier"
+                ]
+            )
         )
 
-        latent[drift_mask] += np.log(
-            prevalence_multiplier
-        )
-
-    # -------------------------------------------------------------------------
-    # Noise
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------
+    # Latent uncertainty
+    # ---------------------------------------------------------
 
     latent += rng.normal(
         loc=0.0,
-        scale=cfg["noise"]["latent_score_std"],
+        scale=float(
+            fraud_cfg[
+                "noise"
+            ][
+                "latent_score_std"
+            ]
+        ),
         size=n,
     )
 
-    probabilities = _sigmoid(latent)
+    # ---------------------------------------------------------
+    # Calibration
+    #
+    # Label flips are applied later. If q is the flip rate:
+    #
+    # final prevalence
+    # = p(1-q) + (1-p)q
+    #
+    # therefore solve for the required pre-flip prevalence.
+    # ---------------------------------------------------------
 
-    probabilities = np.clip(
-        probabilities,
-        cfg["probability_clip"]["min"],
-        cfg["probability_clip"]["max"],
+    target_final = float(
+        fraud_cfg[
+            "target_prevalence"
+        ]
     )
 
-    # -------------------------------------------------------------------------
-    # Approximate prevalence calibration
-    # -------------------------------------------------------------------------
-
-    target_prevalence = float(
-        cfg["target_prevalence"]
+    flip_probability = float(
+        fraud_cfg[
+            "noise"
+        ][
+            "label_flip_probability"
+        ]
     )
 
-    for _ in range(30):
-        current_mean = probabilities.mean()
-
-        if abs(
-            current_mean - target_prevalence
-        ) < 1e-4:
-            break
-
-        adjustment = np.log(
-            target_prevalence
-            / max(current_mean, 1e-8)
+    if flip_probability >= 0.5:
+        raise ValueError(
+            "label_flip_probability "
+            "must be < 0.5."
         )
 
-        latent += adjustment
-
-        probabilities = np.clip(
-            _sigmoid(latent),
-            cfg["probability_clip"]["min"],
-            cfg["probability_clip"]["max"],
+    target_before_flip = (
+        (
+            target_final
+            - flip_probability
         )
+        / (
+            1.0
+            - 2.0
+            * flip_probability
+        )
+    )
+
+    target_before_flip = float(
+        np.clip(
+            target_before_flip,
+            0.0001,
+            0.9999,
+        )
+    )
+
+    probabilities, intercept = (
+        _calibrate_probability_mean(
+            latent_without_intercept=(
+                latent
+            ),
+            target_mean=(
+                target_before_flip
+            ),
+            minimum_probability=float(
+                fraud_cfg[
+                    "probability_clip"
+                ]["min"]
+            ),
+            maximum_probability=float(
+                fraud_cfg[
+                    "probability_clip"
+                ]["max"]
+            ),
+        )
+    )
+
+    latent_calibrated = (
+        latent
+        + intercept
+    )
 
     target = (
-        rng.random(n)
+        rng.random(
+            n
+        )
         < probabilities
     ).astype(int)
 
-    # -------------------------------------------------------------------------
-    # Legitimate hard negatives
-    # -------------------------------------------------------------------------
-
-    legitimate_anomaly_mask = (
-        df["legitimate_anomaly"]
-        .fillna(False)
-        .to_numpy(dtype=bool)
-    )
-
-    # Most intentionally generated legitimate anomalies remain legitimate.
-    keep_legitimate = (
-        legitimate_anomaly_mask
-        & (rng.random(n) < 0.90)
-    )
-
-    target[keep_legitimate] = 0
-
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------
     # Label noise
-    # -------------------------------------------------------------------------
-
-    label_flip_probability = float(
-        cfg["noise"]["label_flip_probability"]
-    )
+    # ---------------------------------------------------------
 
     flip_mask = (
-        rng.random(n)
-        < label_flip_probability
+        rng.random(
+            n
+        )
+        < flip_probability
     )
 
-    target[flip_mask] = 1 - target[flip_mask]
-
-    # -------------------------------------------------------------------------
-    # Fraud mechanism metadata
-    # -------------------------------------------------------------------------
-
-    signal_matrix = np.column_stack(
-        [
-            frequency_signal,
-            amount_signal,
-            repeated_service_signal,
-            provider_signal,
-            pair_signal,
+    target[
+        flip_mask
+    ] = (
+        1
+        - target[
+            flip_mask
         ]
     )
 
-    mechanism_names = np.array(
-        [
-            "frequency_abuse",
-            "amount_inflation",
-            "repeated_service",
-            "provider_abnormality",
-            "customer_provider_pattern",
-        ]
+    # ---------------------------------------------------------
+    # Mechanism metadata
+    # ---------------------------------------------------------
+
+    fraud_mechanism = (
+        _sample_fraud_mechanisms(
+            df=df,
+            target=target,
+            signals=signals,
+            config=config,
+            rng=rng,
+        )
     )
 
-    dominant = mechanism_names[
-        np.argmax(signal_matrix, axis=1)
-    ]
+    df[
+        "latent_fraud_score"
+    ] = latent_calibrated
 
-    active_signal_count = (
-        signal_matrix > 0
-    ).sum(axis=1)
+    df[
+        "synthetic_fraud_probability"
+    ] = probabilities
 
-    fraud_mechanism = np.where(
-        target == 0,
-        "none",
-        np.where(
-            active_signal_count >= 2,
-            "mixed_pattern",
-            dominant,
-        ),
-    )
-
-    df["latent_fraud_score"] = latent
-    df["synthetic_fraud_probability"] = probabilities
-    df["fraud_difficulty"] = np.where(
+    df[
+        "fraud_difficulty"
+    ] = np.where(
         target == 1,
         difficulty,
         "none",
     )
-    df["fraud_mechanism"] = fraud_mechanism
-    df["is_fraud"] = target
+
+    df[
+        "fraud_mechanism"
+    ] = fraud_mechanism
+
+    df[
+        "is_fraud"
+    ] = target
 
     return df
 
@@ -1467,6 +2795,7 @@ def add_fraud_target(
 # Missingness
 # =============================================================================
 
+
 def inject_missingness(
     claims: pd.DataFrame,
     config: dict[str, Any],
@@ -1474,14 +2803,25 @@ def inject_missingness(
 ) -> pd.DataFrame:
     df = claims.copy()
 
-    cfg = config["missingness"]
+    cfg = config[
+        "missingness"
+    ]
 
-    if not cfg.get("enabled", False):
+    if not cfg.get(
+        "enabled",
+        False,
+    ):
         return df
 
     provider_mask = (
-        rng.random(len(df))
-        < cfg["provider_id_probability"]
+        rng.random(
+            len(df)
+        )
+        < float(
+            cfg[
+                "provider_id_probability"
+            ]
+        )
     )
 
     df.loc[
@@ -1490,8 +2830,14 @@ def inject_missingness(
     ] = pd.NA
 
     prescription_mask = (
-        rng.random(len(df))
-        < cfg["prescription_missing_probability"]
+        rng.random(
+            len(df)
+        )
+        < float(
+            cfg[
+                "prescription_missing_probability"
+            ]
+        )
     )
 
     df.loc[
@@ -1500,8 +2846,14 @@ def inject_missingness(
     ] = pd.NA
 
     document_mask = (
-        rng.random(len(df))
-        < cfg["document_count_missing_probability"]
+        rng.random(
+            len(df)
+        )
+        < float(
+            cfg[
+                "document_count_missing_probability"
+            ]
+        )
     )
 
     df.loc[
@@ -1516,14 +2868,24 @@ def inject_missingness(
 # Data quality perturbations
 # =============================================================================
 
+
 def inject_quality_issues(
     claims: pd.DataFrame,
     config: dict[str, Any],
     rng: np.random.Generator,
 ) -> pd.DataFrame:
+    """
+    Inject a small controlled number of invalid records.
+
+    These records intentionally exist so validation.py
+    has real data-quality problems to detect.
+    """
+
     df = claims.copy()
 
-    cfg = config["quality"]
+    cfg = config[
+        "quality"
+    ]
 
     if not cfg.get(
         "inject_invalid_records",
@@ -1531,15 +2893,21 @@ def inject_quality_issues(
     ):
         return df
 
-    n = len(df)
-
     invalid_mask = (
-        rng.random(n)
-        < cfg["invalid_record_probability"]
+        rng.random(
+            len(df)
+        )
+        < float(
+            cfg[
+                "invalid_record_probability"
+            ]
+        )
     )
 
-    invalid_indices = np.flatnonzero(
-        invalid_mask
+    invalid_indices = (
+        np.flatnonzero(
+            invalid_mask
+        )
     )
 
     for idx in invalid_indices:
@@ -1551,86 +2919,135 @@ def inject_quality_issues(
             ]
         )
 
-        if issue_type == "negative_amount":
-            df.loc[idx, "claim_amount"] *= -1
+        if (
+            issue_type
+            == "negative_amount"
+        ):
+            df.loc[
+                idx,
+                "claim_amount",
+            ] *= -1
 
-        elif issue_type == "service_after_submission":
-            df.loc[idx, "service_date"] = (
-                df.loc[idx, "claim_submission_date"]
-                + pd.Timedelta(days=2)
+        elif (
+            issue_type
+            == "service_after_submission"
+        ):
+            df.loc[
+                idx,
+                "service_date",
+            ] = (
+                df.loc[
+                    idx,
+                    "claim_submission_date",
+                ]
+                + pd.Timedelta(
+                    days=2
+                )
             )
 
-        elif issue_type == "zero_units":
-            df.loc[idx, "service_units"] = 0
+        elif (
+            issue_type
+            == "zero_units"
+        ):
+            df.loc[
+                idx,
+                "service_units",
+            ] = 0
 
     return df
 
 
 # =============================================================================
-# Complete generation pipeline
+# Complete pipeline
 # =============================================================================
 
+
 def generate_synthetic_data(
-    config_path: str | Path = "configs/data.yaml",
+    config_path: str | Path = (
+        "configs/data.yaml"
+    ),
 ) -> SyntheticDataBundle:
-    config = load_config(config_path)
+    config = load_config(
+        config_path
+    )
 
     seed = int(
-        config["project"]["random_seed"]
+        config[
+            "project"
+        ][
+            "random_seed"
+        ]
     )
 
-    rng = np.random.default_rng(seed)
-
-    customers = generate_customers(
-        config,
-        rng,
+    rng = np.random.default_rng(
+        seed
     )
 
-    providers = generate_providers(
-        config,
-        rng,
+    customers = (
+        generate_customers(
+            config=config,
+            rng=rng,
+        )
     )
 
-    policies = generate_policies(
-        customers,
-        config,
-        rng,
+    providers = (
+        generate_providers(
+            config=config,
+            rng=rng,
+        )
+    )
+
+    policies = (
+        generate_policies(
+            customers=customers,
+            config=config,
+            rng=rng,
+        )
     )
 
     claims = generate_claims(
-        customers,
-        providers,
-        policies,
-        config,
-        rng,
+        customers=customers,
+        providers=providers,
+        policies=policies,
+        config=config,
+        rng=rng,
     )
 
-    claims = add_historical_features(
-        claims,
+    claims = (
+        add_historical_features(
+            claims=claims,
+            config=config,
+        )
     )
 
-    claims = add_legitimate_anomalies(
-        claims,
-        config,
-        rng,
+    claims = (
+        add_legitimate_anomalies(
+            claims=claims,
+            config=config,
+            rng=rng,
+        )
     )
 
-    claims = add_fraud_target(
-        claims,
-        config,
-        rng,
+    claims = (
+        add_fraud_target(
+            claims=claims,
+            config=config,
+            rng=rng,
+        )
     )
 
     claims = inject_missingness(
-        claims,
-        config,
-        rng,
+        claims=claims,
+        config=config,
+        rng=rng,
     )
 
-    claims = inject_quality_issues(
-        claims,
-        config,
-        rng,
+    claims = (
+        inject_quality_issues(
+            claims=claims,
+            config=config,
+            rng=rng,
+        )
     )
 
     return SyntheticDataBundle(

@@ -1,0 +1,494 @@
+project:
+  name: "health-fraud-risk-model"
+  random_seed: 42
+
+simulation:
+  start_date: "2023-01-01"
+  end_date: "2026-06-30"
+
+  n_customers: 20000
+  n_providers: 1200
+  target_claims: 100000
+
+  fraud_prevalence_target: 0.025
+
+  new_customer_rate: 0.08
+  new_provider_rate: 0.05
+
+  seasonality:
+    enabled: true
+    monthly_factors:
+      "01": 1.08
+      "02": 1.02
+      "03": 1.00
+      "04": 0.97
+      "05": 0.96
+      "06": 0.94
+      "07": 0.90
+      "08": 0.88
+      "09": 1.00
+      "10": 1.04
+      "11": 1.07
+      "12": 1.12
+
+entities:
+
+  customers:
+    age:
+      min: 18
+      max: 90
+      distribution: "truncated_normal"
+      mean: 46
+      std: 17
+
+    tenure_months:
+      min: 1
+      max: 240
+
+    coverage_levels:
+      basic: 0.35
+      standard: 0.45
+      premium: 0.20
+
+    behavior_segments:
+      low_usage: 0.35
+      regular: 0.45
+      high_usage: 0.17
+      atypical: 0.03
+
+    claim_frequency_multiplier:
+      low_usage: 0.55
+      regular: 1.00
+      high_usage: 1.80
+      atypical: 2.40
+
+  providers:
+    provider_types:
+      general_practitioner: 0.20
+      specialist: 0.15
+      dentist: 0.15
+      optician: 0.10
+      physiotherapist: 0.12
+      pharmacy: 0.15
+      laboratory: 0.07
+      medical_supplier: 0.04
+      other: 0.02
+
+    regions:
+      north: 0.20
+      south: 0.25
+      east: 0.20
+      west: 0.20
+      central: 0.15
+
+    behavior_segments:
+      low_volume: 0.20
+      normal: 0.67
+      high_volume: 0.10
+      atypical: 0.03
+
+    claim_volume_multiplier:
+      low_volume: 0.60
+      normal: 1.00
+      high_volume: 1.70
+      atypical: 2.30
+
+services:
+
+  consultation:
+    probability: 0.24
+    amount:
+      distribution: "lognormal"
+      median: 80
+      sigma: 0.35
+      min: 25
+      max: 700
+    units:
+      min: 1
+      max: 2
+
+  dental:
+    probability: 0.18
+    amount:
+      distribution: "lognormal"
+      median: 320
+      sigma: 0.55
+      min: 30
+      max: 5000
+    units:
+      min: 1
+      max: 4
+
+  optical:
+    probability: 0.12
+    amount:
+      distribution: "lognormal"
+      median: 260
+      sigma: 0.45
+      min: 40
+      max: 2500
+    units:
+      min: 1
+      max: 3
+
+  physiotherapy:
+    probability: 0.14
+    amount:
+      distribution: "lognormal"
+      median: 180
+      sigma: 0.40
+      min: 30
+      max: 1600
+    units:
+      min: 1
+      max: 15
+
+  pharmacy:
+    probability: 0.16
+    amount:
+      distribution: "lognormal"
+      median: 70
+      sigma: 0.50
+      min: 5
+      max: 1500
+    units:
+      min: 1
+      max: 8
+
+  medical_device:
+    probability: 0.06
+    amount:
+      distribution: "lognormal"
+      median: 450
+      sigma: 0.60
+      min: 50
+      max: 8000
+    units:
+      min: 1
+      max: 3
+
+  diagnostic:
+    probability: 0.07
+    amount:
+      distribution: "lognormal"
+      median: 140
+      sigma: 0.40
+      min: 20
+      max: 2500
+    units:
+      min: 1
+      max: 5
+
+  other:
+    probability: 0.03
+    amount:
+      distribution: "lognormal"
+      median: 120
+      sigma: 0.55
+      min: 10
+      max: 3000
+    units:
+      min: 1
+      max: 5
+
+claims:
+
+  submission_channels:
+    mobile_app: 0.35
+    web: 0.28
+    email: 0.15
+    paper: 0.07
+    provider_direct: 0.15
+
+  service_to_submission_days:
+    distribution: "gamma"
+    shape: 2.0
+    scale: 4.0
+    max_days: 120
+
+  document_count:
+    min: 1
+    max: 6
+
+  has_invoice_probability: 0.96
+
+  has_prescription_probability:
+    consultation: 0.10
+    dental: 0.05
+    optical: 0.15
+    physiotherapy: 0.55
+    pharmacy: 0.80
+    medical_device: 0.65
+    diagnostic: 0.35
+    other: 0.20
+
+  claim_amount_noise_std: 0.08
+
+policy:
+
+  recent_change_probability: 0.08
+
+  recent_change_window_days: 90
+
+  coverage_limits:
+
+    basic:
+      consultation: 100
+      dental: 500
+      optical: 300
+      physiotherapy: 350
+      pharmacy: 150
+      medical_device: 600
+      diagnostic: 250
+      other: 200
+
+    standard:
+      consultation: 150
+      dental: 900
+      optical: 500
+      physiotherapy: 600
+      pharmacy: 250
+      medical_device: 1000
+      diagnostic: 400
+      other: 350
+
+    premium:
+      consultation: 250
+      dental: 1500
+      optical: 900
+      physiotherapy: 1000
+      pharmacy: 400
+      medical_device: 1800
+      diagnostic: 700
+      other: 600
+
+
+historical_features:
+
+  windows_days:
+    - 7
+    - 30
+    - 90
+    - 365
+
+  customer:
+    enabled: true
+
+    features:
+      - claim_count
+      - total_amount
+      - mean_amount
+      - median_amount
+      - distinct_providers
+      - distinct_services
+      - same_service_count
+      - same_provider_count
+
+  provider:
+    enabled: true
+
+    features:
+      - claim_count
+      - total_amount
+      - mean_amount
+      - median_amount
+      - distinct_customers
+      - service_mix
+      - activity_growth
+
+  customer_provider:
+    enabled: true
+
+    features:
+      - claim_count
+      - total_amount
+      - days_since_previous_interaction
+
+  service:
+    enabled: true
+
+    features:
+      - historical_median_amount
+      - historical_mean_amount
+      - historical_std_amount
+
+
+fraud:
+
+  base_rate: 0.004
+
+  target_prevalence: 0.025
+
+  difficulty_mix:
+    easy: 0.20
+    medium: 0.50
+    hard: 0.30
+
+  mechanisms:
+
+    frequency_abuse:
+      enabled: true
+      prevalence_weight: 0.20
+      signal_strength:
+        easy: 2.20
+        medium: 1.35
+        hard: 0.75
+
+    amount_inflation:
+      enabled: true
+      prevalence_weight: 0.22
+      signal_strength:
+        easy: 2.40
+        medium: 1.45
+        hard: 0.80
+
+    repeated_service:
+      enabled: true
+      prevalence_weight: 0.16
+      signal_strength:
+        easy: 2.00
+        medium: 1.25
+        hard: 0.70
+
+    provider_abnormality:
+      enabled: true
+      prevalence_weight: 0.18
+      signal_strength:
+        easy: 2.20
+        medium: 1.40
+        hard: 0.75
+
+    customer_provider_pattern:
+      enabled: true
+      prevalence_weight: 0.14
+      signal_strength:
+        easy: 2.10
+        medium: 1.30
+        hard: 0.70
+
+    mixed_pattern:
+      enabled: true
+      prevalence_weight: 0.10
+      signal_strength:
+        easy: 2.60
+        medium: 1.60
+        hard: 0.95
+
+  interactions:
+    enabled: true
+
+    definitions:
+
+      amount_and_frequency:
+        weight: 0.80
+
+      provider_and_customer:
+        weight: 0.70
+
+      repeated_service_and_amount:
+        weight: 0.65
+
+      policy_change_and_high_amount:
+        weight: 0.45
+
+  thresholds:
+    high_recent_claims_30d: 5
+    high_same_service_claims_30d: 3
+    high_customer_provider_claims_30d: 3
+    high_claim_to_service_ratio: 2.5
+    high_provider_growth_ratio: 2.0
+
+  noise:
+    latent_score_std: 1.10
+    label_flip_probability: 0.01
+
+  probability_clip:
+    min: 0.0005
+    max: 0.95
+
+
+concept_drift:
+
+  enabled: true
+
+  start_date: "2025-07-01"
+
+  mechanisms:
+
+    frequency_abuse:
+      multiplier: 0.85
+
+    amount_inflation:
+      multiplier: 1.10
+
+    provider_abnormality:
+      multiplier: 1.20
+
+    customer_provider_pattern:
+      multiplier: 1.15
+
+  prevalence_multiplier: 1.08
+
+
+missingness:
+
+  enabled: true
+
+  provider_id_probability: 0.01
+  prescription_missing_probability: 0.03
+  document_count_missing_probability: 0.005
+
+  new_customer_history_missing: true
+  new_provider_history_missing: true
+
+
+legitimate_anomalies:
+
+  enabled: true
+
+  prevalence: 0.04
+
+  patterns:
+    high_amount_legitimate: 0.30
+    high_frequency_legitimate: 0.30
+    unusual_provider_legitimate: 0.20
+    repeated_service_legitimate: 0.20
+
+
+quality:
+
+  duplicate_claim_probability: 0.001
+  extreme_value_probability: 0.002
+  invalid_record_probability: 0.001
+
+  inject_invalid_records: true
+
+
+splits:
+
+  train:
+    start_date: "2023-01-01"
+    end_date: "2025-06-30"
+
+  validation:
+    start_date: "2025-07-01"
+    end_date: "2025-12-31"
+
+  test:
+    start_date: "2026-01-01"
+    end_date: "2026-06-30"
+
+
+output:
+
+  synthetic_dir: "data/synthetic"
+  interim_dir: "data/interim"
+  processed_dir: "data/processed"
+
+  format: "parquet"
+
+  files:
+    customers: "customers.parquet"
+    providers: "providers.parquet"
+    policies: "policies.parquet"
+    claims: "claims.parquet"
