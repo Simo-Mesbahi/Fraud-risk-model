@@ -1,0 +1,6 @@
+legitimate_anomaly_type,false_positive_claims
+none,87
+repeated_service_legitimate,56
+unusual_provider_legitimate,30
+high_frequency_legitimate,27
+high_amount_legitimate,6

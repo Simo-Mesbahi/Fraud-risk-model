@@ -1,0 +1,4 @@
+fraud_difficulty,fraud_claims,mean_score,median_score
+easy,113,0.5576788,0.6706842
+medium,220,0.3810904,0.20495643
+hard,76,0.15833697,0.026135312
