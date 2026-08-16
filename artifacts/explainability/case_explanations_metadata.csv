@@ -1,6 +1,7 @@
-claim_id,is_fraud,fraud_mechanism,fraud_difficulty,legitimate_anomaly,legitimate_anomaly_type,claim_amount,fraud_risk_score,case_type
-CLM_00080394,1,mixed_pattern,medium,False,none,321.35,0.9980360865592957,true_positive_high_risk
-CLM_00048120,0,none,none,True,repeated_service_legitimate,70.77,0.984875500202179,false_positive
-CLM_00090682,1,repeated_service,easy,False,none,565.24,0.0031129554845392704,false_negative
-CLM_00048120,0,none,none,True,repeated_service_legitimate,70.77,0.984875500202179,legitimate_anomaly
-CLM_00002507,1,mixed_pattern,hard,False,none,175.7,0.9843122363090515,hard_fraud
+claim_id,is_fraud,reviewed_top3,fraud_mechanism,fraud_difficulty,legitimate_anomaly,legitimate_anomaly_type,service_category,claim_amount,requested_reimbursement,claim_to_service_median_ratio,customer_claims_30d,same_service_claims_30d,customer_provider_claims_30d,provider_claims_30d,fraud_risk_score,case_type
+CLM_00080394,1,True,mixed_pattern,medium,False,none,consultation,321.35,100.0,3.964102880404614,4.0,4.0,2.0,6.0,0.9980360865592957,true_positive_high_risk
+CLM_00048120,0,True,none,none,True,repeated_service_legitimate,physiotherapy,70.77,57.8,0.39349457881567973,2.0,2.0,1.0,3.0,0.984875500202179,false_positive_high_risk
+CLM_00090682,1,False,repeated_service,easy,False,none,medical_device,565.24,422.14,1.234660667088967,0.0,0.0,0.0,1.0,0.0031129554845392704,false_negative_extreme
+CLM_00047679,0,False,none,none,True,high_amount_legitimate,consultation,218.84,150.0,2.7094218150303333,0.0,0.0,0.0,0.0,0.11424937844276428,legitimate_anomaly_not_reviewed
+CLM_00002507,1,True,mixed_pattern,hard,False,none,consultation,175.7,164.96,2.1659270216962523,4.0,3.0,3.0,4.0,0.9843122363090515,hard_fraud_high_risk
+CLM_00056707,1,False,amount_inflation,medium,False,none,pharmacy,198.4,174.28,2.847506279153211,1.0,0.0,0.0,2.0,0.0933002158999443,amount_inflation_false_negative

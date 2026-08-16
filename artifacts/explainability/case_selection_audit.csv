@@ -1,0 +1,7 @@
+case_type,row_position,claim_id,is_fraud,reviewed_top3,fraud_risk_score,fraud_mechanism,fraud_difficulty,legitimate_anomaly,legitimate_anomaly_type
+true_positive_high_risk,12249,CLM_00080394,1,True,0.9980360865592957,mixed_pattern,medium,False,none
+false_positive_high_risk,11263,CLM_00048120,0,True,0.984875500202179,none,none,True,repeated_service_legitimate
+false_negative_extreme,6379,CLM_00090682,1,False,0.0031129554845392704,repeated_service,easy,False,none
+legitimate_anomaly_not_reviewed,11979,CLM_00047679,0,False,0.11424937844276428,none,none,True,high_amount_legitimate
+hard_fraud_high_risk,14174,CLM_00002507,1,True,0.9843122363090515,mixed_pattern,hard,False,none
+amount_inflation_false_negative,5383,CLM_00056707,1,False,0.0933002158999443,amount_inflation,medium,False,none
