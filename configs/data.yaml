@@ -2,6 +2,11 @@ project:
   name: "health-fraud-risk-model"
   random_seed: 42
 
+
+# =============================================================================
+# GLOBAL SIMULATION
+# =============================================================================
+
 simulation:
   start_date: "2023-01-01"
   end_date: "2026-06-30"
@@ -10,13 +15,9 @@ simulation:
   n_providers: 1200
   target_claims: 100000
 
-  fraud_prevalence_target: 0.025
-
-  new_customer_rate: 0.08
-  new_provider_rate: 0.05
-
   seasonality:
     enabled: true
+
     monthly_factors:
       "01": 1.08
       "02": 1.02
@@ -31,13 +32,19 @@ simulation:
       "11": 1.07
       "12": 1.12
 
+
+# =============================================================================
+# CUSTOMER / PROVIDER POPULATIONS
+# =============================================================================
+
 entities:
 
   customers:
+
     age:
+      distribution: "truncated_normal"
       min: 18
       max: 90
-      distribution: "truncated_normal"
       mean: 46
       std: 17
 
@@ -62,7 +69,9 @@ entities:
       high_usage: 1.80
       atypical: 2.40
 
+
   providers:
+
     provider_types:
       general_practitioner: 0.20
       specialist: 0.15
@@ -93,103 +102,136 @@ entities:
       high_volume: 1.70
       atypical: 2.30
 
+
+# =============================================================================
+# HEALTH SERVICES
+# =============================================================================
+
 services:
 
   consultation:
     probability: 0.24
+
     amount:
       distribution: "lognormal"
       median: 80
       sigma: 0.35
       min: 25
       max: 700
+
     units:
       min: 1
       max: 2
 
+
   dental:
     probability: 0.18
+
     amount:
       distribution: "lognormal"
       median: 320
       sigma: 0.55
       min: 30
       max: 5000
+
     units:
       min: 1
       max: 4
 
+
   optical:
     probability: 0.12
+
     amount:
       distribution: "lognormal"
       median: 260
       sigma: 0.45
       min: 40
       max: 2500
+
     units:
       min: 1
       max: 3
 
+
   physiotherapy:
     probability: 0.14
+
     amount:
       distribution: "lognormal"
       median: 180
       sigma: 0.40
       min: 30
       max: 1600
+
     units:
       min: 1
       max: 15
 
+
   pharmacy:
     probability: 0.16
+
     amount:
       distribution: "lognormal"
       median: 70
       sigma: 0.50
       min: 5
       max: 1500
+
     units:
       min: 1
       max: 8
 
+
   medical_device:
     probability: 0.06
+
     amount:
       distribution: "lognormal"
       median: 450
       sigma: 0.60
       min: 50
       max: 8000
+
     units:
       min: 1
       max: 3
 
+
   diagnostic:
     probability: 0.07
+
     amount:
       distribution: "lognormal"
       median: 140
       sigma: 0.40
       min: 20
       max: 2500
+
     units:
       min: 1
       max: 5
 
+
   other:
     probability: 0.03
+
     amount:
       distribution: "lognormal"
       median: 120
       sigma: 0.55
       min: 10
       max: 3000
+
     units:
       min: 1
       max: 5
+
+
+# =============================================================================
+# CLAIM CHARACTERISTICS
+# =============================================================================
 
 claims:
 
@@ -224,10 +266,14 @@ claims:
 
   claim_amount_noise_std: 0.08
 
+
+# =============================================================================
+# POLICY
+# =============================================================================
+
 policy:
 
   recent_change_probability: 0.08
-
   recent_change_window_days: 90
 
   coverage_limits:
@@ -263,6 +309,10 @@ policy:
       other: 600
 
 
+# =============================================================================
+# HISTORICAL FEATURES
+# =============================================================================
+
 historical_features:
 
   windows_days:
@@ -271,141 +321,389 @@ historical_features:
     - 90
     - 365
 
+  zero_fill_count_features: true
+
   customer:
     enabled: true
-
-    features:
-      - claim_count
-      - total_amount
-      - mean_amount
-      - median_amount
-      - distinct_providers
-      - distinct_services
-      - same_service_count
-      - same_provider_count
 
   provider:
     enabled: true
 
-    features:
-      - claim_count
-      - total_amount
-      - mean_amount
-      - median_amount
-      - distinct_customers
-      - service_mix
-      - activity_growth
-
   customer_provider:
     enabled: true
-
-    features:
-      - claim_count
-      - total_amount
-      - days_since_previous_interaction
 
   service:
     enabled: true
 
-    features:
-      - historical_median_amount
-      - historical_mean_amount
-      - historical_std_amount
 
+# =============================================================================
+# FRAUD SIMULATION V3
+# =============================================================================
 
 fraud:
 
-  base_rate: 0.004
-
+  # Final expected fraud prevalence.
   target_prevalence: 0.025
+
+  # Small amount of unavoidable / imperfect ground-truth noise.
+  # Much lower than the former 1%.
+  label_flip_probability: 0.001
 
   difficulty_mix:
     easy: 0.20
     medium: 0.50
     hard: 0.30
 
+  # Fraud mechanisms now represent ACTUAL behavioural injections.
+  mechanism_mix:
+
+    amount_inflation: 0.22
+    frequency_abuse: 0.20
+    provider_abnormality: 0.18
+    repeated_service: 0.16
+    customer_provider_pattern: 0.14
+    mixed_pattern: 0.10
+
+
+  # ---------------------------------------------------------------------------
+  # AMOUNT INFLATION
+  # ---------------------------------------------------------------------------
+
   mechanisms:
 
-    frequency_abuse:
-      enabled: true
-      prevalence_weight: 0.20
-      signal_strength:
-        easy: 2.20
-        medium: 1.35
-        hard: 0.75
-
     amount_inflation:
+
       enabled: true
-      prevalence_weight: 0.22
-      signal_strength:
-        easy: 2.40
-        medium: 1.45
-        hard: 0.80
+
+      inflation_factor:
+
+        easy:
+          min: 1.80
+          max: 3.00
+
+        medium:
+          min: 1.35
+          max: 2.00
+
+        hard:
+          min: 1.10
+          max: 1.45
+
+      reimbursement_pressure:
+
+        easy:
+          min: 0.90
+          max: 1.00
+
+        medium:
+          min: 0.82
+          max: 0.98
+
+        hard:
+          min: 0.72
+          max: 0.92
+
+
+    # -------------------------------------------------------------------------
+    # FREQUENCY ABUSE
+    # -------------------------------------------------------------------------
+
+    frequency_abuse:
+
+      enabled: true
+
+      episode_size:
+
+        easy:
+          min: 5
+          max: 8
+
+        medium:
+          min: 4
+          max: 6
+
+        hard:
+          min: 3
+          max: 4
+
+      window_days:
+
+        easy: 7
+        medium: 14
+        hard: 30
+
+      same_service_probability:
+
+        easy: 0.70
+        medium: 0.55
+        hard: 0.40
+
+      same_provider_probability:
+
+        easy: 0.45
+        medium: 0.35
+        hard: 0.25
+
+
+    # -------------------------------------------------------------------------
+    # REPEATED SERVICE
+    # -------------------------------------------------------------------------
 
     repeated_service:
+
       enabled: true
-      prevalence_weight: 0.16
-      signal_strength:
-        easy: 2.00
-        medium: 1.25
-        hard: 0.70
+
+      episode_size:
+
+        easy:
+          min: 5
+          max: 7
+
+        medium:
+          min: 4
+          max: 6
+
+        hard:
+          min: 3
+          max: 4
+
+      window_days:
+
+        easy: 10
+        medium: 20
+        hard: 30
+
+      same_provider_probability:
+
+        easy: 0.75
+        medium: 0.60
+        hard: 0.45
+
+
+    # -------------------------------------------------------------------------
+    # PROVIDER ABNORMALITY
+    # -------------------------------------------------------------------------
 
     provider_abnormality:
+
       enabled: true
-      prevalence_weight: 0.18
-      signal_strength:
-        easy: 2.20
-        medium: 1.40
-        hard: 0.75
+
+      episode_size:
+
+        easy:
+          min: 12
+          max: 20
+
+        medium:
+          min: 8
+          max: 14
+
+        hard:
+          min: 5
+          max: 9
+
+      window_days:
+
+        easy: 14
+        medium: 21
+        hard: 30
+
+      distinct_customer_fraction:
+
+        easy: 0.80
+        medium: 0.70
+        hard: 0.60
+
+      amount_multiplier:
+
+        easy:
+          min: 1.20
+          max: 1.65
+
+        medium:
+          min: 1.05
+          max: 1.35
+
+        hard:
+          min: 0.95
+          max: 1.20
+
+
+    # -------------------------------------------------------------------------
+    # CUSTOMER × PROVIDER CONCENTRATION
+    # -------------------------------------------------------------------------
 
     customer_provider_pattern:
+
       enabled: true
-      prevalence_weight: 0.14
-      signal_strength:
-        easy: 2.10
-        medium: 1.30
-        hard: 0.70
+
+      episode_size:
+
+        easy:
+          min: 5
+          max: 8
+
+        medium:
+          min: 4
+          max: 6
+
+        hard:
+          min: 3
+          max: 4
+
+      window_days:
+
+        easy: 10
+        medium: 20
+        hard: 30
+
+      same_service_probability:
+
+        easy: 0.70
+        medium: 0.55
+        hard: 0.40
+
+
+    # -------------------------------------------------------------------------
+    # MIXED FRAUD
+    # -------------------------------------------------------------------------
 
     mixed_pattern:
+
       enabled: true
-      prevalence_weight: 0.10
-      signal_strength:
-        easy: 2.60
-        medium: 1.60
-        hard: 0.95
 
-  interactions:
-    enabled: true
+      episode_size:
 
-    definitions:
+        easy:
+          min: 5
+          max: 8
 
-      amount_and_frequency:
-        weight: 0.80
+        medium:
+          min: 4
+          max: 6
 
-      provider_and_customer:
-        weight: 0.70
+        hard:
+          min: 3
+          max: 5
 
-      repeated_service_and_amount:
-        weight: 0.65
+      window_days:
 
-      policy_change_and_high_amount:
-        weight: 0.45
+        easy: 10
+        medium: 20
+        hard: 30
 
-  thresholds:
-    high_recent_claims_30d: 5
-    high_same_service_claims_30d: 3
-    high_customer_provider_claims_30d: 3
-    high_claim_to_service_ratio: 2.5
-    high_provider_growth_ratio: 2.0
+      inflation_factor:
 
-  noise:
-    latent_score_std: 1.10
-    label_flip_probability: 0.01
+        easy:
+          min: 1.55
+          max: 2.30
 
-  probability_clip:
-    min: 0.0005
-    max: 0.95
+        medium:
+          min: 1.25
+          max: 1.75
 
+        hard:
+          min: 1.08
+          max: 1.35
+
+      same_provider_probability:
+
+        easy: 0.85
+        medium: 0.70
+        hard: 0.55
+
+      same_service_probability:
+
+        easy: 0.80
+        medium: 0.65
+        hard: 0.50
+
+
+  # ---------------------------------------------------------------------------
+  # EPISODE CONSTRUCTION
+  # ---------------------------------------------------------------------------
+
+  episode_generation:
+
+    # Avoid concentrating behavioural fraud at the very beginning
+    # where no useful history can yet exist.
+    warmup_days: 60
+
+    # Avoid heavy reuse of the same claim across different episodes.
+    maximum_claim_reuse: 1
+
+    # A proportion of the first observations inside an episode can remain
+    # intrinsically hard because historical evidence has not accumulated yet.
+    label_all_episode_claims: true
+
+    # Preserve overlap between legitimate and fraudulent distributions.
+    avoid_perfect_separation: true
+
+
+# =============================================================================
+# LEGITIMATE HARD NEGATIVES
+# =============================================================================
+
+legitimate_anomalies:
+
+  enabled: true
+
+  prevalence: 0.04
+
+  pattern_mix:
+
+    high_amount_legitimate: 0.30
+    high_frequency_legitimate: 0.30
+    unusual_provider_legitimate: 0.20
+    repeated_service_legitimate: 0.20
+
+
+  # These are intentionally weaker / overlapping versions of suspicious
+  # behaviours and remain labelled as legitimate.
+
+  high_amount_legitimate:
+
+    multiplier:
+      min: 1.20
+      max: 1.70
+
+
+  high_frequency_legitimate:
+
+    episode_size:
+      min: 2
+      max: 4
+
+    window_days:
+      min: 14
+      max: 30
+
+
+  unusual_provider_legitimate:
+
+    episode_size:
+      min: 3
+      max: 6
+
+    window_days:
+      min: 14
+      max: 30
+
+
+  repeated_service_legitimate:
+
+    episode_size:
+      min: 2
+      max: 4
+
+    window_days:
+      min: 14
+      max: 30
+
+
+# =============================================================================
+# CONCEPT DRIFT
+# =============================================================================
 
 concept_drift:
 
@@ -413,22 +711,24 @@ concept_drift:
 
   start_date: "2025-07-01"
 
-  mechanisms:
+  # Changes should be noticeable but not destroy generalisation.
+  mechanism_weight_multiplier:
 
-    frequency_abuse:
-      multiplier: 0.85
+    amount_inflation: 1.08
+    frequency_abuse: 0.92
+    provider_abnormality: 1.10
+    repeated_service: 1.00
+    customer_provider_pattern: 1.08
+    mixed_pattern: 1.05
 
-    amount_inflation:
-      multiplier: 1.10
+  severity_multiplier: 1.03
 
-    provider_abnormality:
-      multiplier: 1.20
+  prevalence_multiplier: 1.05
 
-    customer_provider_pattern:
-      multiplier: 1.15
 
-  prevalence_multiplier: 1.08
-
+# =============================================================================
+# MISSINGNESS
+# =============================================================================
 
 missingness:
 
@@ -438,31 +738,26 @@ missingness:
   prescription_missing_probability: 0.03
   document_count_missing_probability: 0.005
 
-  new_customer_history_missing: true
-  new_provider_history_missing: true
 
-
-legitimate_anomalies:
-
-  enabled: true
-
-  prevalence: 0.04
-
-  patterns:
-    high_amount_legitimate: 0.30
-    high_frequency_legitimate: 0.30
-    unusual_provider_legitimate: 0.20
-    repeated_service_legitimate: 0.20
-
+# =============================================================================
+# CONTROLLED DATA QUALITY ISSUES
+# =============================================================================
 
 quality:
 
-  duplicate_claim_probability: 0.001
-  extreme_value_probability: 0.002
-  invalid_record_probability: 0.001
-
   inject_invalid_records: true
 
+  invalid_record_probability: 0.001
+
+  invalid_record_types:
+    negative_amount: 0.34
+    zero_units: 0.33
+    service_after_submission: 0.33
+
+
+# =============================================================================
+# TEMPORAL SPLITS
+# =============================================================================
 
 splits:
 
@@ -478,6 +773,10 @@ splits:
     start_date: "2026-01-01"
     end_date: "2026-06-30"
 
+
+# =============================================================================
+# OUTPUT
+# =============================================================================
 
 output:
 
