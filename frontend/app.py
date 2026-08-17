@@ -9,44 +9,44 @@ from typing import Any, Final
 
 import streamlit as st
 
-from api_client import (
+from frontend.api_client import (
     FraudAPIClient,
     FraudAPIError,
 )
 
-from components import (
+from frontend.components import (
     status_badge,
 )
 
-from styles import (
+from frontend.styles import (
     CUSTOM_CSS,
 )
 
-from utils.state import (
+from frontend.utils.state import (
     initialize_state,
 )
 
-from views.claim_analysis import (
+from frontend.views.claim_analysis import (
     render as render_claim_analysis,
 )
 
-from views.investigation_queue import (
+from frontend.views.investigation_queue import (
     render as render_investigation_queue,
 )
 
-from views.model_insights import (
+from frontend.views.model_insights import (
     render as render_model_insights,
 )
 
-from views.overview import (
+from frontend.views.overview import (
     render as render_overview,
 )
 
-from views.portfolio_scoring import (
+from frontend.views.portfolio_scoring import (
     render as render_portfolio_scoring,
 )
 
-from views.system_status import (
+from frontend.views.system_status import (
     render as render_system_status,
 )
 

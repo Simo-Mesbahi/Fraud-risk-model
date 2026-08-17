@@ -10,7 +10,7 @@ from typing import (
 
 import streamlit as st
 
-from utils.formatting import (
+from frontend.utils.formatting import (
     risk_color,
     risk_tier,
 )

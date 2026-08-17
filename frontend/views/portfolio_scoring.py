@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from components import (
+from frontend.components import (
     empty_state,
     human_review_notice,
     info_panel,
@@ -20,12 +20,12 @@ from components import (
     section_header,
 )
 
-from utils.data import (
+from frontend.utils.data import (
     load_demo_claims,
     read_uploaded_file,
 )
 
-from utils.formatting import (
+from frontend.utils.formatting import (
     risk_tier,
 )
 
