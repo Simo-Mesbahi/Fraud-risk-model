@@ -1128,3 +1128,25 @@ The model card contains the complete discussion of:
 This repository is an **educational and portfolio project using synthetic insurance data**.
 
 It is not a production fraud-detection system and should not be used to make decisions about real insurance claims, customers or healthcare providers.
+
+
+
+
+
+
+
+---------------------------
+---------------------------
+
+frontend/utils/state.py
+Je vais ajouter proprement l’état SHAP (single_explanation), sécuriser les resets et éviter les états obsolètes entre pages.
+frontend/components.py
+Très important : metric_card, info_panel, risk_gauge, risk_badge, section_header, empty_state, etc. doivent avoir une API visuelle cohérente, responsive et réutilisable partout.
+frontend/styles.py
+Là on verrouille le design system global : typographie, spacing, cartes, grilles, textes longs, responsive, overflow, tableaux, tabs, expander, boutons, métriques, dark theme. C’est ce fichier qui empêchera le retour des problèmes de texte coupé que tu avais eus.
+frontend/app.py
+Pour harmoniser navigation, header global, sidebar, statut API, branding et routing avec les nouvelles capacités TreeSHAP.
+Ensuite les vues, une par une :
+overview.py → portfolio_scoring.py → investigation_queue.py → model_insights.py → system_status.py.
+Enfin frontend/utils/data.py et frontend/utils/formatting.py
+On fera une dernière passe de cohérence : JSON-safe, formatage des montants/ratios/risques, noms métier, labels SHAP, imports communs et suppression des duplication

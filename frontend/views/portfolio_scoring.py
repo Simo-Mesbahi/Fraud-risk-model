@@ -4,7 +4,7 @@ from datetime import (
     datetime,
     timezone,
 )
-
+from time import perf_counter
 from typing import Any
 
 import altair as alt
@@ -82,18 +82,13 @@ def _safe_float(
     default: float = 0.0,
 ) -> float:
     """
-    Convert a value to a finite float.
+    Convert a numeric-like value to a finite float.
     """
 
     try:
+        result = float(value)
 
-        result = float(
-            value
-        )
-
-        if np.isfinite(
-            result
-        ):
+        if np.isfinite(result):
             return result
 
     except (
@@ -102,9 +97,7 @@ def _safe_float(
     ):
         pass
 
-    return float(
-        default
-    )
+    return float(default)
 
 
 def _safe_int(
@@ -112,21 +105,16 @@ def _safe_int(
     default: int = 0,
 ) -> int:
     """
-    Convert numeric-like values safely to integer.
+    Convert a numeric-like value safely to integer.
     """
 
     try:
-
-        if pd.isna(
-            value
-        ):
+        if pd.isna(value):
             return default
 
         return int(
             round(
-                float(
-                    value
-                )
+                float(value)
             )
         )
 
@@ -141,14 +129,12 @@ def _bounded_score(
     value: Any,
 ) -> float:
     """
-    Clamp a fraud probability to [0, 1].
+    Normalize a probability-like value to [0, 1].
     """
 
     return min(
         max(
-            _safe_float(
-                value
-            ),
+            _safe_float(value),
             0.0,
         ),
         1.0,
@@ -171,15 +157,13 @@ def _format_identifier(
     value: Any,
 ) -> str:
     """
-    Normalize an identifier for display.
+    Normalize identifiers for display.
     """
 
     if value is None:
         return "—"
 
-    text = str(
-        value
-    ).strip()
+    text = str(value).strip()
 
     return (
         text
@@ -190,7 +174,7 @@ def _format_identifier(
 
 def _utc_timestamp() -> str:
     """
-    Generate an audit-friendly UTC timestamp.
+    Return an audit-friendly UTC timestamp.
     """
 
     return (
@@ -203,21 +187,41 @@ def _utc_timestamp() -> str:
     )
 
 
+def _safe_model_label(
+    metadata: dict[str, Any],
+) -> str:
+    """
+    Build a compact model label from portfolio metadata.
+    """
+
+    model_name = (
+        metadata.get("model_name")
+        or "—"
+    )
+
+    model_version = (
+        metadata.get("model_version")
+        or "—"
+    )
+
+    return (
+        f"{model_name} v{model_version}"
+    )
+
+
 # =============================================================================
 # Leakage protection
 # =============================================================================
 
 
 def _strip_leakage(
-    claims: list[
-        dict[str, Any]
-    ],
-) -> list[
-    dict[str, Any]
-]:
+    claims: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """
-    Remove target and generation-only synthetic variables
-    before inference.
+    Remove target and synthetic-generation-only variables before inference.
+
+    These fields may exist in the bundled synthetic dataset for evaluation
+    purposes but must never be exposed to the deployed inference model.
     """
 
     cleaned: list[
@@ -230,7 +234,6 @@ def _strip_leakage(
             claim,
             dict,
         ):
-
             raise TypeError(
                 (
                     "Each portfolio item must be "
@@ -240,16 +243,10 @@ def _strip_leakage(
 
         cleaned.append(
             {
-                key:
-                    value
-
-                for (
-                    key,
-                    value,
-                ) in claim.items()
-
-                if key
-                not in LEAKAGE_COLUMNS
+                key: value
+                for key, value
+                in claim.items()
+                if key not in LEAKAGE_COLUMNS
             }
         )
 
@@ -265,14 +262,13 @@ def _runtime_model_info(
     client,
 ) -> dict[str, Any]:
     """
-    Retrieve the currently deployed model contract.
+    Retrieve the deployed model contract.
 
-    Failure is non-blocking because scoring itself remains the final
-    source of truth for API availability.
+    Failure is intentionally non-blocking here because the scoring endpoint
+    remains the authoritative test of inference availability.
     """
 
     try:
-
         payload = (
             client.model_info()
         )
@@ -290,13 +286,10 @@ def _runtime_model_info(
 
 
 def _review_fraction(
-    model_info: dict[
-        str,
-        Any,
-    ],
+    model_info: dict[str, Any],
 ) -> float:
     """
-    Resolve the current operational review fraction.
+    Resolve the operational investigation fraction from model metadata.
     """
 
     policy = (
@@ -310,21 +303,12 @@ def _review_fraction(
         policy,
         dict,
     ):
-
-        value = (
-            _safe_float(
-                policy.get(
-                    "fraction"
-                ),
-                default=-1.0,
-            )
+        value = _safe_float(
+            policy.get("fraction"),
+            default=-1.0,
         )
 
-        if (
-            0
-            < value
-            <= 1
-        ):
+        if 0 < value <= 1:
             return value
 
     return DEFAULT_REVIEW_FRACTION
@@ -337,43 +321,29 @@ def _review_fraction(
 
 def _initialize_state() -> None:
     """
-    Initialize portfolio-scoring state.
+    Ensure the portfolio state contract exists.
+
+    This is intentionally idempotent and remains compatible with the
+    application's central state initialization.
     """
 
     defaults = {
-        "batch_results":
-            None,
-
-        "batch_input":
-            None,
-
-        "batch_source":
-            None,
-
-        "batch_metadata":
-            None,
-
-        "batch_selected_claim_id":
-            None,
+        "batch_results": None,
+        "batch_input": None,
+        "batch_source": None,
+        "batch_metadata": None,
+        "batch_selected_claim_id": None,
     }
 
-    for (
-        key,
-        value,
-    ) in defaults.items():
+    for key, value in defaults.items():
 
-        if key not in (
-            st.session_state
-        ):
-
-            st.session_state[
-                key
-            ] = value
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 
 def _reset_portfolio() -> None:
     """
-    Reset portfolio results and related UI widgets.
+    Reset portfolio workflow state and portfolio-specific widgets.
     """
 
     st.session_state.batch_results = None
@@ -384,58 +354,35 @@ def _reset_portfolio() -> None:
 
     for key in PORTFOLIO_WIDGET_KEYS:
 
-        if key in (
-            st.session_state
-        ):
-
-            del st.session_state[
-                key
-            ]
+        if key in st.session_state:
+            del st.session_state[key]
 
 
 # =============================================================================
-# Input validation
+# Source portfolio validation
 # =============================================================================
 
 
 def _claims_to_frame(
-    claims: list[
-        dict[str, Any]
-    ],
+    claims: list[dict[str, Any]],
 ) -> pd.DataFrame:
     """
-    Convert claim objects into a validated source DataFrame.
+    Convert claim dictionaries into a structurally validated DataFrame.
     """
 
     if not claims:
-
         raise ValueError(
-            (
-                "The portfolio contains "
-                "no claims."
-            )
+            "The portfolio contains no claims."
         )
 
-    frame = (
-        pd.DataFrame(
-            claims
-        )
-    )
+    frame = pd.DataFrame(claims)
 
     if frame.empty:
-
         raise ValueError(
-            (
-                "The portfolio contains "
-                "no usable rows."
-            )
+            "The portfolio contains no usable rows."
         )
 
-    if (
-        "claim_id"
-        not in frame.columns
-    ):
-
+    if "claim_id" not in frame.columns:
         raise ValueError(
             (
                 "The portfolio must contain "
@@ -443,28 +390,29 @@ def _claims_to_frame(
             )
         )
 
-    frame[
-        "claim_id"
-    ] = (
-        frame[
-            "claim_id"
-        ]
+    frame["claim_id"] = (
+        frame["claim_id"]
         .astype(str)
         .str.strip()
     )
 
-    if (
-        frame[
-            "claim_id"
-        ]
-        .eq("")
-        .any()
-    ):
+    invalid_claim_ids = (
+        frame["claim_id"]
+        .isin(
+            [
+                "",
+                "nan",
+                "None",
+                "<NA>",
+            ]
+        )
+    )
 
+    if invalid_claim_ids.any():
         raise ValueError(
             (
                 "Portfolio contains one or more "
-                "empty claim identifiers."
+                "missing or empty claim identifiers."
             )
         )
 
@@ -472,23 +420,18 @@ def _claims_to_frame(
 
 
 def _validate_portfolio(
-    claims: list[
-        dict[str, Any]
-    ],
+    claims: list[dict[str, Any]],
 ) -> tuple[
     bool,
     list[str],
 ]:
     """
-    Validate portfolio structure before sending data to the API.
+    Validate portfolio structure before API submission.
     """
 
-    errors: list[
-        str
-    ] = []
+    errors: list[str] = []
 
     if not claims:
-
         return (
             False,
             [
@@ -496,13 +439,7 @@ def _validate_portfolio(
             ],
         )
 
-    if (
-        len(
-            claims
-        )
-        > MAX_BATCH_SIZE
-    ):
-
+    if len(claims) > MAX_BATCH_SIZE:
         errors.append(
             (
                 f"Portfolio contains {len(claims):,} claims. "
@@ -513,14 +450,8 @@ def _validate_portfolio(
 
     invalid_rows = [
         index
-
-        for (
-            index,
-            claim,
-        ) in enumerate(
-            claims
-        )
-
+        for index, claim
+        in enumerate(claims)
         if not isinstance(
             claim,
             dict,
@@ -528,7 +459,6 @@ def _validate_portfolio(
     ]
 
     if invalid_rows:
-
         errors.append(
             (
                 f"{len(invalid_rows):,} row(s) "
@@ -542,17 +472,12 @@ def _validate_portfolio(
         )
 
     try:
-
-        frame = (
-            _claims_to_frame(
-                claims
-            )
+        frame = _claims_to_frame(
+            claims
         )
 
         duplicate_mask = (
-            frame[
-                "claim_id"
-            ]
+            frame["claim_id"]
             .duplicated(
                 keep=False
             )
@@ -569,10 +494,8 @@ def _validate_portfolio(
                 .tolist()
             )
 
-            examples = (
-                ", ".join(
-                    duplicates[:5]
-                )
+            examples = ", ".join(
+                duplicates[:5]
             )
 
             errors.append(
@@ -584,36 +507,30 @@ def _validate_portfolio(
             )
 
     except Exception as exc:
-
         errors.append(
-            str(
-                exc
-            )
+            str(exc)
         )
 
     return (
-        len(
-            errors
-        )
-        == 0,
+        len(errors) == 0,
         errors,
     )
 
 
 # =============================================================================
-# Prediction validation
+# Prediction contract validation
 # =============================================================================
 
 
 def _validate_predictions(
     predictions: pd.DataFrame,
+    expected_claim_ids: set[str] | None = None,
 ) -> pd.DataFrame:
     """
     Validate and normalize the /score-batch API result.
     """
 
     if predictions.empty:
-
         raise RuntimeError(
             (
                 "The inference API returned "
@@ -628,93 +545,162 @@ def _validate_predictions(
 
     missing = (
         required
-        - set(
-            predictions.columns
-        )
+        - set(predictions.columns)
     )
 
     if missing:
-
         raise RuntimeError(
             (
                 "Batch response is missing required fields: "
                 + ", ".join(
-                    sorted(
-                        missing
-                    )
+                    sorted(missing)
                 )
             )
         )
 
-    frame = (
-        predictions.copy()
-    )
+    frame = predictions.copy()
 
-    frame[
-        "claim_id"
-    ] = (
-        frame[
-            "claim_id"
-        ]
+    frame["claim_id"] = (
+        frame["claim_id"]
         .astype(str)
         .str.strip()
     )
 
-    frame[
-        "fraud_risk_score"
-    ] = (
+    invalid_ids = (
+        frame["claim_id"]
+        .isin(
+            [
+                "",
+                "nan",
+                "None",
+                "<NA>",
+            ]
+        )
+    )
+
+    if invalid_ids.any():
+        raise RuntimeError(
+            (
+                "The inference API returned one or more "
+                "invalid claim identifiers."
+            )
+        )
+
+    frame["fraud_risk_score"] = (
         pd.to_numeric(
-            frame[
-                "fraud_risk_score"
-            ],
+            frame["fraud_risk_score"],
             errors="coerce",
         )
     )
 
     if (
-        frame[
-            "fraud_risk_score"
-        ]
+        frame["fraud_risk_score"]
         .isna()
         .any()
     ):
-
         raise RuntimeError(
             (
                 "The model returned one or more "
-                "invalid fraud-risk scores."
+                "non-numeric fraud-risk scores."
             )
         )
 
-    frame[
-        "fraud_risk_score"
-    ] = (
-        frame[
-            "fraud_risk_score"
-        ]
-        .clip(
-            lower=0.0,
-            upper=1.0,
+    non_finite = ~np.isfinite(
+        frame["fraud_risk_score"]
+        .to_numpy(
+            dtype=float
         )
     )
 
+    if non_finite.any():
+        raise RuntimeError(
+            (
+                "The model returned one or more "
+                "non-finite fraud-risk scores."
+            )
+        )
+
+    outside_probability_range = (
+        (
+            frame["fraud_risk_score"]
+            < 0.0
+        )
+        |
+        (
+            frame["fraud_risk_score"]
+            > 1.0
+        )
+    )
+
+    if outside_probability_range.any():
+        raise RuntimeError(
+            (
+                "The inference API returned fraud-risk "
+                "scores outside the expected [0, 1] range."
+            )
+        )
+
     duplicated = (
-        frame[
-            "claim_id"
-        ]
+        frame["claim_id"]
         .duplicated(
             keep=False
         )
     )
 
     if duplicated.any():
-
         raise RuntimeError(
             (
                 "The inference API returned duplicate "
                 "claim IDs."
             )
         )
+
+    if expected_claim_ids is not None:
+
+        returned_ids = set(
+            frame["claim_id"]
+            .tolist()
+        )
+
+        missing_predictions = (
+            expected_claim_ids
+            - returned_ids
+        )
+
+        unexpected_predictions = (
+            returned_ids
+            - expected_claim_ids
+        )
+
+        if missing_predictions:
+            examples = ", ".join(
+                sorted(
+                    missing_predictions
+                )[:5]
+            )
+
+            raise RuntimeError(
+                (
+                    f"The inference API omitted "
+                    f"{len(missing_predictions):,} submitted "
+                    f"claim(s). Examples: {examples}"
+                )
+            )
+
+        if unexpected_predictions:
+            examples = ", ".join(
+                sorted(
+                    unexpected_predictions
+                )[:5]
+            )
+
+            raise RuntimeError(
+                (
+                    f"The inference API returned "
+                    f"{len(unexpected_predictions):,} unexpected "
+                    f"claim(s). Examples: {examples}"
+                )
+            )
 
     return frame
 
@@ -726,25 +712,29 @@ def _validate_predictions(
 
 def _enrich_predictions(
     predictions: pd.DataFrame,
-    claims: list[
-        dict[str, Any]
-    ],
+    claims: list[dict[str, Any]],
     review_fraction: float,
 ) -> pd.DataFrame:
     """
     Join predictions with business context and derive portfolio ranking.
+
+    The model score remains untouched. Portfolio rank, percentile and review
+    selection are operational attributes derived from the scored population.
     """
 
-    predictions = (
-        _validate_predictions(
-            predictions
-        )
+    source = _claims_to_frame(
+        claims
     )
 
-    source = (
-        _claims_to_frame(
-            claims
-        )
+    expected_claim_ids = set(
+        source["claim_id"]
+        .astype(str)
+        .tolist()
+    )
+
+    predictions = _validate_predictions(
+        predictions,
+        expected_claim_ids=expected_claim_ids,
     )
 
     business_columns = [
@@ -767,133 +757,105 @@ def _enrich_predictions(
 
     available = [
         column
-
-        for column
-        in business_columns
-
-        if column
-        in source.columns
+        for column in business_columns
+        if column in source.columns
     ]
 
-    source = (
-        source[
-            available
-        ]
+    source_context = (
+        source[available]
         .drop_duplicates(
-            subset=[
-                "claim_id"
-            ],
+            subset=["claim_id"],
             keep="first",
         )
     )
 
     duplicate_business_columns = [
         column
-
-        for column
-        in available
-
+        for column in available
         if (
             column != "claim_id"
-            and column
-            in predictions.columns
+            and column in predictions.columns
         )
     ]
 
     if duplicate_business_columns:
-
-        predictions = (
-            predictions.drop(
-                columns=duplicate_business_columns
-            )
+        predictions = predictions.drop(
+            columns=duplicate_business_columns
         )
 
-    frame = (
-        predictions.merge(
-            source,
-            on="claim_id",
-            how="left",
-            validate="one_to_one",
-        )
+    frame = predictions.merge(
+        source_context,
+        on="claim_id",
+        how="left",
+        validate="one_to_one",
     )
 
     frame = (
         frame
         .sort_values(
-            "fraud_risk_score",
-            ascending=False,
+            [
+                "fraud_risk_score",
+                "claim_id",
+            ],
+            ascending=[
+                False,
+                True,
+            ],
+            kind="stable",
         )
         .reset_index(
             drop=True
         )
     )
 
-    frame[
-        "risk_tier"
-    ] = (
-        frame[
-            "fraud_risk_score"
-        ]
-        .apply(
-            risk_tier
-        )
+    frame["risk_tier"] = (
+        frame["fraud_risk_score"]
+        .apply(risk_tier)
     )
 
-    frame[
-        "portfolio_rank"
-    ] = np.arange(
+    frame["portfolio_rank"] = np.arange(
         1,
-        len(
-            frame
-        )
-        + 1,
+        len(frame) + 1,
+        dtype=int,
     )
 
-    # Highest-risk claim = percentile 100%.
-    frame[
-        "risk_percentile"
-    ] = (
-        1.0
-        - (
-            (
-                frame[
-                    "portfolio_rank"
-                ]
-                - 1
-            )
-            / max(
-                len(
-                    frame
-                ),
-                1,
+    count = len(frame)
+
+    if count == 1:
+        frame["risk_percentile"] = 1.0
+
+    else:
+        frame["risk_percentile"] = (
+            1.0
+            - (
+                (
+                    frame["portfolio_rank"]
+                    - 1
+                )
+                / (
+                    count
+                    - 1
+                )
             )
         )
-    )
 
-    review_count = (
+    review_count = min(
+        count,
         max(
             1,
             int(
                 np.ceil(
-                    len(
-                        frame
-                    )
+                    count
                     * review_fraction
                 )
             ),
-        )
+        ),
     )
 
-    frame[
-        "selected_for_review"
-    ] = False
-
-    frame.loc[
-        frame.index[
-            :review_count
-        ],
-        "selected_for_review",
-    ] = True
+    frame["selected_for_review"] = (
+        frame["portfolio_rank"]
+        <= review_count
+    )
 
     return frame
 
@@ -905,49 +867,46 @@ def _enrich_predictions(
 
 def _score_portfolio(
     client,
-    claims: list[
-        dict[str, Any]
-    ],
+    claims: list[dict[str, Any]],
     source_name: str,
+    source_type: str,
 ) -> None:
     """
     Score a complete portfolio through the deployed batch endpoint.
+
+    The function validates:
+    - source structure,
+    - anti-leakage policy,
+    - API response contract,
+    - response count,
+    - claim identity preservation,
+    - score validity.
+
+    It then stores a normalized portfolio snapshot in session state.
     """
 
-    (
-        valid,
-        errors,
-    ) = (
-        _validate_portfolio(
-            claims
-        )
+    valid, errors = _validate_portfolio(
+        claims
     )
 
     if not valid:
-
         raise ValueError(
-            " | ".join(
-                errors
-            )
+            " | ".join(errors)
         )
 
-    clean_claims = (
-        _strip_leakage(
-            claims
-        )
+    clean_claims = _strip_leakage(
+        claims
     )
 
-    model_info = (
-        _runtime_model_info(
-            client
-        )
+    model_info = _runtime_model_info(
+        client
     )
 
-    review_fraction = (
-        _review_fraction(
-            model_info
-        )
+    review_fraction = _review_fraction(
+        model_info
     )
+
+    started = perf_counter()
 
     with st.spinner(
         (
@@ -955,18 +914,19 @@ def _score_portfolio(
             "and scoring claims with the deployed model..."
         )
     ):
-
-        response = (
-            client.score_batch(
-                clean_claims
-            )
+        response = client.score_batch(
+            clean_claims
         )
+
+    elapsed_seconds = max(
+        perf_counter() - started,
+        0.0,
+    )
 
     if not isinstance(
         response,
         dict,
     ):
-
         raise RuntimeError(
             (
                 "The inference API returned "
@@ -974,17 +934,14 @@ def _score_portfolio(
             )
         )
 
-    raw_predictions = (
-        response.get(
-            "predictions"
-        )
+    raw_predictions = response.get(
+        "predictions"
     )
 
     if not isinstance(
         raw_predictions,
         list,
     ):
-
         raise RuntimeError(
             (
                 "Batch response does not contain "
@@ -992,35 +949,75 @@ def _score_portfolio(
             )
         )
 
-    predictions = (
-        pd.DataFrame(
+    declared_count = response.get(
+        "count"
+    )
+
+    if declared_count is not None:
+
+        declared_count = _safe_int(
+            declared_count,
+            default=-1,
+        )
+
+        if declared_count != len(
             raw_predictions
-        )
-    )
+        ):
+            raise RuntimeError(
+                (
+                    "Batch response count is inconsistent "
+                    "with the predictions payload."
+                )
+            )
 
-    frame = (
-        _enrich_predictions(
-            predictions,
-            clean_claims,
-            review_fraction,
-        )
-    )
-
-    if (
-        len(
-            frame
-        )
-        != len(
-            clean_claims
-        )
+    if len(raw_predictions) != len(
+        clean_claims
     ):
-
         raise RuntimeError(
             (
                 "The number of model predictions does not "
                 "match the number of submitted claims."
             )
         )
+
+    predictions = pd.DataFrame(
+        raw_predictions
+    )
+
+    frame = _enrich_predictions(
+        predictions=predictions,
+        claims=clean_claims,
+        review_fraction=review_fraction,
+    )
+
+    if len(frame) != len(
+        clean_claims
+    ):
+        raise RuntimeError(
+            (
+                "Portfolio enrichment changed the "
+                "number of scored claims."
+            )
+        )
+
+    review_count = int(
+        frame["selected_for_review"]
+        .sum()
+    )
+
+    selected_scores = (
+        frame.loc[
+            frame["selected_for_review"],
+            "fraud_risk_score",
+        ]
+    )
+
+    throughput = (
+        len(frame)
+        / elapsed_seconds
+        if elapsed_seconds > 0
+        else None
+    )
 
     st.session_state.batch_results = (
         frame
@@ -1031,21 +1028,18 @@ def _score_portfolio(
     )
 
     st.session_state.batch_source = (
-        str(
-            source_name
-        )
+        str(source_name)
     )
 
     st.session_state.batch_metadata = {
         "claim_count":
-            len(
-                frame
-            ),
+            len(frame),
 
         "source":
-            str(
-                source_name
-            ),
+            str(source_name),
+
+        "source_type":
+            str(source_type),
 
         "generated_at":
             _utc_timestamp(),
@@ -1054,35 +1048,43 @@ def _score_portfolio(
             review_fraction,
 
         "review_count":
-            int(
-                frame[
-                    "selected_for_review"
-                ]
-                .sum()
-            ),
+            review_count,
 
         "mean_risk":
             float(
-                frame[
-                    "fraud_risk_score"
-                ]
+                frame["fraud_risk_score"]
                 .mean()
             ),
 
         "median_risk":
             float(
-                frame[
-                    "fraud_risk_score"
-                ]
+                frame["fraud_risk_score"]
                 .median()
             ),
 
         "max_risk":
             float(
-                frame[
-                    "fraud_risk_score"
-                ]
+                frame["fraud_risk_score"]
                 .max()
+            ),
+
+        "selected_mean_risk":
+            (
+                float(
+                    selected_scores.mean()
+                )
+                if not selected_scores.empty
+                else None
+            ),
+
+        "scoring_seconds":
+            float(elapsed_seconds),
+
+        "throughput_claims_per_second":
+            (
+                float(throughput)
+                if throughput is not None
+                else None
             ),
 
         "model_name":
@@ -1094,7 +1096,41 @@ def _score_portfolio(
             model_info.get(
                 "model_version"
             ),
+
+        "target":
+            model_info.get(
+                "target"
+            ),
+
+        "feature_count":
+            model_info.get(
+                "feature_count"
+            ),
+
+        "transformed_feature_count":
+            model_info.get(
+                "transformed_feature_count"
+            ),
+
+        "probability_method":
+            model_info.get(
+                "probability_method"
+            ),
+
+        "review_policy":
+            model_info.get(
+                "review_policy"
+            ),
+
+        "explainability":
+            model_info.get(
+                "explainability"
+            ),
     }
+
+    st.session_state.batch_selected_claim_id = (
+        None
+    )
 
 
 # =============================================================================
@@ -1106,7 +1142,7 @@ def _render_portfolio_input(
     client,
 ) -> None:
     """
-    Render upload and demo portfolio entry points.
+    Render uploaded and bundled-demo portfolio entry points.
     """
 
     section_header(
@@ -1117,35 +1153,31 @@ def _render_portfolio_input(
         ),
     )
 
-    upload_tab, demo_tab = (
-        st.tabs(
-            [
-                "Upload Portfolio",
-                "Demo Portfolio",
-            ]
-        )
+    upload_tab, demo_tab = st.tabs(
+        [
+            "Upload Portfolio",
+            "Demo Portfolio",
+        ]
     )
 
     # -------------------------------------------------------------------------
-    # Upload
+    # Uploaded portfolio
     # -------------------------------------------------------------------------
 
     with upload_tab:
 
-        uploaded = (
-            st.file_uploader(
-                "Portfolio file",
-                type=[
-                    "json",
-                    "csv",
-                    "parquet",
-                ],
-                key="portfolio_upload",
-                help=(
-                    "Supported formats: JSON, CSV and Parquet. "
-                    f"Maximum {MAX_BATCH_SIZE:,} claims."
-                ),
-            )
+        uploaded = st.file_uploader(
+            "Portfolio file",
+            type=[
+                "json",
+                "csv",
+                "parquet",
+            ],
+            key="portfolio_upload",
+            help=(
+                "Supported formats: JSON, CSV and Parquet. "
+                f"Maximum {MAX_BATCH_SIZE:,} claims."
+            ),
         )
 
         if uploaded is None:
@@ -1160,53 +1192,44 @@ def _render_portfolio_input(
         else:
 
             try:
-
-                claims = (
-                    read_uploaded_file(
-                        uploaded
-                    )
+                claims = read_uploaded_file(
+                    uploaded
                 )
 
-                raw_frame = (
-                    _claims_to_frame(
-                        claims
-                    )
+                raw_frame = _claims_to_frame(
+                    claims
                 )
 
-                (
-                    valid,
-                    validation_errors,
-                ) = (
+                valid, validation_errors = (
                     _validate_portfolio(
                         claims
                     )
                 )
 
-                missing_values = (
-                    int(
-                        raw_frame
-                        .isna()
-                        .sum()
-                        .sum()
-                    )
+                missing_values = int(
+                    raw_frame
+                    .isna()
+                    .sum()
+                    .sum()
                 )
 
-                duplicate_ids = (
-                    int(
-                        raw_frame[
-                            "claim_id"
-                        ]
-                        .duplicated()
-                        .sum()
-                    )
+                duplicate_ids = int(
+                    raw_frame["claim_id"]
+                    .duplicated()
+                    .sum()
                 )
 
-                c1, c2, c3, c4 = (
-                    st.columns(4)
+                leakage_present = [
+                    column
+                    for column in LEAKAGE_COLUMNS
+                    if column in raw_frame.columns
+                ]
+
+                c1, c2, c3, c4 = st.columns(
+                    4
                 )
 
                 with c1:
-
                     metric_card(
                         "Claims",
                         f"{len(raw_frame):,}",
@@ -1214,7 +1237,6 @@ def _render_portfolio_input(
                     )
 
                 with c2:
-
                     metric_card(
                         "Columns",
                         f"{len(raw_frame.columns):,}",
@@ -1222,7 +1244,6 @@ def _render_portfolio_input(
                     )
 
                 with c3:
-
                     metric_card(
                         "Missing Values",
                         f"{missing_values:,}",
@@ -1235,7 +1256,6 @@ def _render_portfolio_input(
                     )
 
                 with c4:
-
                     metric_card(
                         "Duplicate IDs",
                         f"{duplicate_ids:,}",
@@ -1250,33 +1270,38 @@ def _render_portfolio_input(
                 st.write("")
 
                 if valid:
-
                     info_panel(
                         "Portfolio Validation Passed",
                         (
-                            "The portfolio passed frontend structural "
-                            "validation and is ready for model scoring."
+                            "The portfolio passed frontend "
+                            "structural validation and is ready "
+                            "for model scoring."
                         ),
                         tone="success",
                     )
 
                 else:
-
                     for message in validation_errors:
+                        st.error(message)
 
-                        st.error(
-                            message
-                        )
+                if leakage_present:
+                    info_panel(
+                        "Protected Evaluation Fields Detected",
+                        (
+                            f"{len(leakage_present)} evaluation or "
+                            "synthetic-generation field(s) were found. "
+                            "They will be removed automatically before "
+                            "the portfolio is sent to the model."
+                        ),
+                        tone="info",
+                    )
 
                 with st.expander(
                     "Preview portfolio",
                     expanded=False,
                 ):
-
                     st.dataframe(
-                        raw_frame.head(
-                            25
-                        ),
+                        raw_frame.head(25),
                         use_container_width=True,
                         hide_index=True,
                     )
@@ -1285,18 +1310,14 @@ def _render_portfolio_input(
                     "Score Portfolio",
                     type="primary",
                     use_container_width=True,
-                    disabled=(
-                        not valid
-                    ),
+                    disabled=not valid,
                     key="score_uploaded_portfolio",
                 ):
-
                     _score_portfolio(
                         client=client,
                         claims=claims,
-                        source_name=(
-                            uploaded.name
-                        ),
+                        source_name=uploaded.name,
+                        source_type="uploaded",
                     )
 
                     st.success(
@@ -1306,8 +1327,9 @@ def _render_portfolio_input(
                         )
                     )
 
-            except Exception as exc:
+                    st.rerun()
 
+            except Exception as exc:
                 st.error(
                     (
                         "Unable to process portfolio. "
@@ -1316,7 +1338,7 @@ def _render_portfolio_input(
                 )
 
     # -------------------------------------------------------------------------
-    # Demo
+    # Demo portfolio
     # -------------------------------------------------------------------------
 
     with demo_tab:
@@ -1328,21 +1350,19 @@ def _render_portfolio_input(
             )
         )
 
-        demo_size = (
-            st.select_slider(
-                "Demo portfolio size",
-                options=[
-                    100,
-                    250,
-                    500,
-                    1_000,
-                    2_500,
-                    5_000,
-                    10_000,
-                ],
-                value=500,
-                key="portfolio_demo_size",
-            )
+        demo_size = st.select_slider(
+            "Demo portfolio size",
+            options=[
+                100,
+                250,
+                500,
+                1_000,
+                2_500,
+                5_000,
+                10_000,
+            ],
+            value=500,
+            key="portfolio_demo_size",
         )
 
         if st.button(
@@ -1353,19 +1373,14 @@ def _render_portfolio_input(
         ):
 
             try:
-
-                demo = (
-                    load_demo_claims(
-                        limit=int(
-                            demo_size
-                        )
+                demo = load_demo_claims(
+                    limit=int(
+                        demo_size
                     )
                 )
 
-                claims = (
-                    demo.to_dict(
-                        orient="records"
-                    )
+                claims = demo.to_dict(
+                    orient="records"
                 )
 
                 _score_portfolio(
@@ -1374,6 +1389,7 @@ def _render_portfolio_input(
                     source_name=(
                         "Synthetic demo portfolio"
                     ),
+                    source_type="demo",
                 )
 
                 st.success(
@@ -1383,12 +1399,11 @@ def _render_portfolio_input(
                     )
                 )
 
-            except Exception as exc:
+                st.rerun()
 
+            except Exception as exc:
                 st.error(
-                    str(
-                        exc
-                    )
+                    str(exc)
                 )
 
 
@@ -1402,7 +1417,7 @@ def _render_kpis(
     metadata: dict[str, Any],
 ) -> None:
     """
-    Render portfolio-level risk summary.
+    Render portfolio-level operational risk summary.
     """
 
     section_header(
@@ -1414,75 +1429,64 @@ def _render_kpis(
         eyebrow="BATCH INFERENCE",
     )
 
-    count = (
-        len(
-            frame
-        )
+    count = len(frame)
+
+    mean_risk = float(
+        frame["fraud_risk_score"]
+        .mean()
     )
 
-    mean_risk = (
-        float(
-            frame[
-                "fraud_risk_score"
-            ]
-            .mean()
-        )
+    median_risk = float(
+        frame["fraud_risk_score"]
+        .median()
     )
 
-    median_risk = (
-        float(
-            frame[
-                "fraud_risk_score"
-            ]
-            .median()
-        )
+    max_risk = float(
+        frame["fraud_risk_score"]
+        .max()
     )
 
-    max_risk = (
-        float(
-            frame[
-                "fraud_risk_score"
-            ]
-            .max()
+    high_critical = int(
+        (
+            frame["fraud_risk_score"]
+            >= 0.20
         )
+        .sum()
     )
 
-    high_critical = (
-        int(
-            (
-                frame[
-                    "fraud_risk_score"
-                ]
-                >= 0.20
-            )
-            .sum()
+    critical = int(
+        (
+            frame["risk_tier"]
+            == "CRITICAL"
         )
+        .sum()
     )
 
-    review_count = (
-        int(
-            frame[
-                "selected_for_review"
-            ]
-            .sum()
-        )
+    review_count = int(
+        frame["selected_for_review"]
+        .sum()
     )
 
-    review_fraction = (
-        _safe_float(
-            metadata.get(
-                "review_fraction"
-            ),
-            DEFAULT_REVIEW_FRACTION,
-        )
+    review_fraction = _safe_float(
+        metadata.get(
+            "review_fraction"
+        ),
+        DEFAULT_REVIEW_FRACTION,
     )
 
-    c1, c2, c3, c4 = (
-        st.columns(4)
+    selected_mean = (
+        frame.loc[
+            frame["selected_for_review"],
+            "fraud_risk_score",
+        ]
+        .mean()
+    )
+
+    c1, c2, c3, c4 = st.columns(
+        4
     )
 
     with c1:
-
         metric_card(
             "Claims Scored",
             f"{count:,}",
@@ -1495,18 +1499,14 @@ def _render_kpis(
         )
 
     with c2:
-
         metric_card(
             "Mean Risk",
             f"{mean_risk:.2%}",
-            (
-                f"Median {median_risk:.2%}"
-            ),
+            f"Median {median_risk:.2%}",
             tone="info",
         )
 
     with c3:
-
         metric_card(
             "Maximum Risk",
             f"{max_risk:.2%}",
@@ -1515,11 +1515,12 @@ def _render_kpis(
                 "danger"
                 if max_risk >= 0.50
                 else "warning"
+                if max_risk >= 0.20
+                else "info"
             ),
         )
 
     with c4:
-
         metric_card(
             "High / Critical",
             f"{high_critical:,}",
@@ -1538,24 +1539,11 @@ def _render_kpis(
 
     st.write("")
 
-    c1, c2, c3 = (
-        st.columns(3)
-    )
-
-    critical = (
-        int(
-            (
-                frame[
-                    "risk_tier"
-                ]
-                == "CRITICAL"
-            )
-            .sum()
-        )
+    c1, c2, c3, c4 = st.columns(
+        4
     )
 
     with c1:
-
         metric_card(
             "Critical Claims",
             f"{critical:,}",
@@ -1568,47 +1556,64 @@ def _render_kpis(
         )
 
     with c2:
-
         metric_card(
             (
                 f"Review Population "
                 f"@ {review_fraction:.0%}"
             ),
             f"{review_count:,}",
-            "Current operational policy",
+            "Operational capacity policy",
             tone="info",
         )
 
-    selected_mean = (
-        frame.loc[
-            frame[
-                "selected_for_review"
-            ],
-            "fraud_risk_score",
-        ]
-        .mean()
-    )
-
     with c3:
-
         metric_card(
             "Selected Mean Risk",
             (
                 f"{selected_mean:.2%}"
-                if pd.notna(
-                    selected_mean
-                )
+                if pd.notna(selected_mean)
                 else "—"
             ),
             "Highest-ranked review population",
             tone="warning",
         )
 
+    scoring_seconds = _safe_float(
+        metadata.get(
+            "scoring_seconds"
+        ),
+        default=-1.0,
+    )
+
+    throughput = _safe_float(
+        metadata.get(
+            "throughput_claims_per_second"
+        ),
+        default=-1.0,
+    )
+
+    with c4:
+        metric_card(
+            "Scoring Runtime",
+            (
+                f"{scoring_seconds:.2f}s"
+                if scoring_seconds >= 0
+                else "—"
+            ),
+            (
+                f"{throughput:,.0f} claims/sec"
+                if throughput >= 0
+                else "Runtime telemetry"
+            ),
+            tone="info",
+        )
+
     st.caption(
         (
             f"Scored: {metadata.get('generated_at', '—')} • "
-            f"Model: {metadata.get('model_name') or '—'} "
-            f"v{metadata.get('model_version') or '—'}"
+            f"Model: {_safe_model_label(metadata)} • "
+            f"Source type: "
+            f"{metadata.get('source_type', '—')}"
         )
     )
 
@@ -1622,7 +1627,7 @@ def _render_distribution(
     frame: pd.DataFrame,
 ) -> None:
     """
-    Render continuous and categorical risk distributions.
+    Render continuous and categorical portfolio-risk distributions.
     """
 
     st.write("")
@@ -1637,22 +1642,18 @@ def _render_distribution(
         eyebrow="PORTFOLIO ANALYTICS",
     )
 
-    left, right = (
-        st.columns(
-            [
-                1.55,
-                1,
-            ],
-            gap="large",
-        )
+    left, right = st.columns(
+        [
+            1.55,
+            1,
+        ],
+        gap="large",
     )
 
     with left:
 
         histogram = (
-            alt.Chart(
-                frame
-            )
+            alt.Chart(frame)
             .mark_bar()
             .encode(
                 x=alt.X(
@@ -1665,12 +1666,10 @@ def _render_distribution(
                         format=".0%",
                     ),
                 ),
-
                 y=alt.Y(
                     "count():Q",
                     title="Claims",
                 ),
-
                 tooltip=[
                     alt.Tooltip(
                         "count():Q",
@@ -1691,9 +1690,7 @@ def _render_distribution(
     with right:
 
         distribution = (
-            frame[
-                "risk_tier"
-            ]
+            frame["risk_tier"]
             .value_counts()
             .reindex(
                 RISK_ORDER,
@@ -1707,24 +1704,16 @@ def _render_distribution(
             )
         )
 
-        distribution[
-            "Share"
-        ] = (
-            distribution[
-                "Claims"
-            ]
+        distribution["Share"] = (
+            distribution["Claims"]
             / max(
-                len(
-                    frame
-                ),
+                len(frame),
                 1,
             )
         )
 
         tier_chart = (
-            alt.Chart(
-                distribution
-            )
+            alt.Chart(distribution)
             .mark_bar(
                 cornerRadiusTopLeft=6,
                 cornerRadiusTopRight=6,
@@ -1735,23 +1724,19 @@ def _render_distribution(
                     sort=RISK_ORDER,
                     title=None,
                 ),
-
                 y=alt.Y(
                     "Claims:Q",
                     title="Claims",
                 ),
-
                 tooltip=[
                     alt.Tooltip(
                         "Risk Tier:N",
                         title="Tier",
                     ),
-
                     alt.Tooltip(
                         "Claims:Q",
                         title="Claims",
                     ),
-
                     alt.Tooltip(
                         "Share:Q",
                         title="Share",
@@ -1771,6 +1756,125 @@ def _render_distribution(
 
 
 # =============================================================================
+# Review-set concentration
+# =============================================================================
+
+
+def _render_review_concentration(
+    frame: pd.DataFrame,
+    metadata: dict[str, Any],
+) -> None:
+    """
+    Compare the operational review population with the remaining portfolio.
+    """
+
+    st.write("")
+    st.write("")
+
+    section_header(
+        "Review-Set Concentration",
+        (
+            "Measure how strongly model risk is concentrated "
+            "inside the current investigation capacity."
+        ),
+        eyebrow="OPERATIONAL PRIORITIZATION",
+    )
+
+    selected = frame.loc[
+        frame["selected_for_review"]
+    ]
+
+    remaining = frame.loc[
+        ~frame["selected_for_review"]
+    ]
+
+    review_fraction = _safe_float(
+        metadata.get(
+            "review_fraction"
+        ),
+        DEFAULT_REVIEW_FRACTION,
+    )
+
+    selected_mean = (
+        float(
+            selected["fraud_risk_score"]
+            .mean()
+        )
+        if not selected.empty
+        else 0.0
+    )
+
+    remaining_mean = (
+        float(
+            remaining["fraud_risk_score"]
+            .mean()
+        )
+        if not remaining.empty
+        else 0.0
+    )
+
+    concentration_ratio = (
+        selected_mean
+        / remaining_mean
+        if remaining_mean > 0
+        else None
+    )
+
+    cutoff = (
+        float(
+            selected["fraud_risk_score"]
+            .min()
+        )
+        if not selected.empty
+        else None
+    )
+
+    c1, c2, c3, c4 = st.columns(
+        4
+    )
+
+    with c1:
+        metric_card(
+            "Review Capacity",
+            f"{review_fraction:.1%}",
+            f"{len(selected):,} claims selected",
+            tone="info",
+        )
+
+    with c2:
+        metric_card(
+            "Review Mean Risk",
+            f"{selected_mean:.2%}",
+            "Selected population",
+            tone="warning",
+        )
+
+    with c3:
+        metric_card(
+            "Review Cutoff",
+            (
+                f"{cutoff:.2%}"
+                if cutoff is not None
+                else "—"
+            ),
+            "Lowest selected model score",
+            tone="info",
+        )
+
+    with c4:
+        metric_card(
+            "Risk Concentration",
+            (
+                f"{concentration_ratio:.1f}×"
+                if concentration_ratio is not None
+                else "—"
+            ),
+            "Selected vs remaining mean",
+            tone="warning",
+        )
+
+
+# =============================================================================
 # Quantiles
 # =============================================================================
 
@@ -1779,7 +1883,7 @@ def _render_quantiles(
     frame: pd.DataFrame,
 ) -> None:
     """
-    Display portfolio score concentration thresholds.
+    Display score concentration thresholds.
     """
 
     st.write("")
@@ -1795,56 +1899,31 @@ def _render_quantiles(
     )
 
     quantiles = {
-        "Median":
-            0.50,
-
-        "75th Percentile":
-            0.75,
-
-        "90th Percentile":
-            0.90,
-
-        "95th Percentile":
-            0.95,
-
-        "99th Percentile":
-            0.99,
+        "Median": 0.50,
+        "75th Percentile": 0.75,
+        "90th Percentile": 0.90,
+        "95th Percentile": 0.95,
+        "99th Percentile": 0.99,
     }
 
-    columns = (
-        st.columns(
-            len(
-                quantiles
-            )
-        )
+    columns = st.columns(
+        len(quantiles)
     )
 
-    for (
-        column,
-        item,
-    ) in zip(
+    for column, item in zip(
         columns,
         quantiles.items(),
     ):
+        label, quantile = item
 
-        (
-            label,
-            quantile,
-        ) = item
-
-        value = (
-            float(
-                frame[
-                    "fraud_risk_score"
-                ]
-                .quantile(
-                    quantile
-                )
+        value = float(
+            frame["fraud_risk_score"]
+            .quantile(
+                quantile
             )
         )
 
         with column:
-
             metric_card(
                 label,
                 f"{value:.2%}",
@@ -1861,7 +1940,7 @@ def _render_top_risk(
     frame: pd.DataFrame,
 ) -> None:
     """
-    Render highest-scoring claims.
+    Render the highest-scoring portfolio claims.
     """
 
     st.write("")
@@ -1876,13 +1955,9 @@ def _render_top_risk(
         eyebrow="PRIORITIZATION",
     )
 
-    maximum = (
-        min(
-            100,
-            len(
-                frame
-            ),
-        )
+    maximum = min(
+        100,
+        len(frame),
     )
 
     if maximum <= 5:
@@ -1898,26 +1973,22 @@ def _render_top_risk(
 
     else:
 
-        top_n = (
-            st.slider(
-                "Number of top-risk claims",
-                min_value=5,
-                max_value=maximum,
-                value=min(
-                    20,
-                    maximum,
-                ),
-                step=5,
-                key="portfolio_top_n",
-            )
+        top_n = st.slider(
+            "Number of top-risk claims",
+            min_value=5,
+            max_value=maximum,
+            value=min(
+                20,
+                maximum,
+            ),
+            step=5,
+            key="portfolio_top_n",
         )
 
     top = (
         frame
         .head(
-            int(
-                top_n
-            )
+            int(top_n)
         )
         .copy()
     )
@@ -1928,6 +1999,7 @@ def _render_top_risk(
         "fraud_risk_score",
         "risk_percentile",
         "risk_tier",
+        "selected_for_review",
         "claim_amount",
         "requested_reimbursement",
         "service_category",
@@ -1937,18 +2009,12 @@ def _render_top_risk(
 
     columns = [
         column
-
-        for column
-        in preferred
-
-        if column
-        in top.columns
+        for column in preferred
+        if column in top.columns
     ]
 
     st.dataframe(
-        top[
-            columns
-        ],
+        top[columns],
         use_container_width=True,
         hide_index=True,
         column_config={
@@ -1971,6 +2037,11 @@ def _render_top_risk(
                 st.column_config.NumberColumn(
                     "Risk Percentile",
                     format="%.1%%",
+                ),
+
+            "selected_for_review":
+                st.column_config.CheckboxColumn(
+                    "Review",
                 ),
 
             "claim_amount":
@@ -1997,7 +2068,7 @@ def _render_filters(
     frame: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Search and filter portfolio results.
+    Search and filter scored claims without modifying model predictions.
     """
 
     st.write("")
@@ -2012,61 +2083,42 @@ def _render_filters(
         eyebrow="EXPLORATION",
     )
 
-    c1, c2 = (
-        st.columns(2)
-    )
+    c1, c2 = st.columns(2)
 
     with c1:
-
-        search = (
-            st.text_input(
-                "Search",
-                placeholder=(
-                    "Claim, customer or provider ID"
-                ),
-                key="portfolio_search",
-            )
+        search = st.text_input(
+            "Search",
+            placeholder=(
+                "Claim, customer or provider ID"
+            ),
+            key="portfolio_search",
         )
 
     with c2:
 
         available_tiers = [
             tier
-
-            for tier
-            in RISK_ORDER
-
+            for tier in RISK_ORDER
             if tier
-            in frame[
-                "risk_tier"
-            ]
+            in frame["risk_tier"]
             .unique()
         ]
 
-        selected_tiers = (
-            st.multiselect(
-                "Risk tier",
-                options=available_tiers,
-                default=available_tiers,
-                key="portfolio_tier_filter",
-            )
+        selected_tiers = st.multiselect(
+            "Risk tier",
+            options=available_tiers,
+            default=available_tiers,
+            key="portfolio_tier_filter",
         )
 
-    c1, c2, c3 = (
-        st.columns(3)
-    )
+    c1, c2, c3 = st.columns(3)
 
     with c1:
 
-        if (
-            "service_category"
-            in frame.columns
-        ):
+        if "service_category" in frame.columns:
 
             services = (
-                frame[
-                    "service_category"
-                ]
+                frame["service_category"]
                 .dropna()
                 .astype(str)
                 .sort_values()
@@ -2074,95 +2126,71 @@ def _render_filters(
                 .tolist()
             )
 
-            selected_services = (
-                st.multiselect(
-                    "Service category",
-                    options=services,
-                    key="portfolio_service_filter",
-                )
+            selected_services = st.multiselect(
+                "Service category",
+                options=services,
+                key="portfolio_service_filter",
             )
 
         else:
-
             selected_services = []
 
     with c2:
 
-        minimum_risk = (
-            st.slider(
-                "Minimum risk",
-                min_value=0.0,
-                max_value=1.0,
-                value=0.0,
-                step=0.01,
-                format="%.0f%%",
-                key="portfolio_min_risk",
-            )
+        minimum_risk = st.slider(
+            "Minimum risk",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.0,
+            step=0.01,
+            format="%.0f%%",
+            key="portfolio_min_risk",
         )
 
     with c3:
 
-        review_only = (
-            st.toggle(
-                "Selected for review only",
-                value=False,
-                key="portfolio_review_only",
-            )
+        review_only = st.toggle(
+            "Selected for review only",
+            value=False,
+            key="portfolio_review_only",
         )
 
-    display = (
-        frame.copy()
-    )
+    display = frame.copy()
 
     if selected_tiers:
 
-        display = (
-            display.loc[
-                display[
-                    "risk_tier"
-                ]
-                .isin(
-                    selected_tiers
-                )
-            ]
-        )
+        display = display.loc[
+            display["risk_tier"]
+            .isin(
+                selected_tiers
+            )
+        ]
+
+    else:
+        display = display.iloc[0:0]
 
     if (
         selected_services
         and "service_category"
         in display.columns
     ):
-
-        display = (
-            display.loc[
-                display[
-                    "service_category"
-                ]
-                .astype(str)
-                .isin(
-                    selected_services
-                )
-            ]
-        )
-
-    display = (
-        display.loc[
-            display[
-                "fraud_risk_score"
-            ]
-            >= minimum_risk
+        display = display.loc[
+            display["service_category"]
+            .astype(str)
+            .isin(
+                selected_services
+            )
         ]
-    )
+
+    display = display.loc[
+        display["fraud_risk_score"]
+        >= minimum_risk
+    ]
 
     if review_only:
-
-        display = (
-            display.loc[
-                display[
-                    "selected_for_review"
-                ]
-            ]
-        )
+        display = display.loc[
+            display["selected_for_review"]
+        ]
 
     if search:
 
@@ -2174,23 +2202,17 @@ def _render_filters(
 
         searchable = [
             column
-
-            for column
-            in [
+            for column in [
                 "claim_id",
                 "customer_id",
                 "provider_id",
             ]
-
-            if column
-            in display.columns
+            if column in display.columns
         ]
 
-        mask = (
-            pd.Series(
-                False,
-                index=display.index,
-            )
+        mask = pd.Series(
+            False,
+            index=display.index,
         )
 
         for column in searchable:
@@ -2198,9 +2220,7 @@ def _render_filters(
             mask = (
                 mask
                 |
-                display[
-                    column
-                ]
+                display[column]
                 .astype(str)
                 .str.lower()
                 .str.contains(
@@ -2210,11 +2230,9 @@ def _render_filters(
                 )
             )
 
-        display = (
-            display.loc[
-                mask
-            ]
-        )
+        display = display.loc[
+            mask
+        ]
 
     st.caption(
         (
@@ -2244,13 +2262,13 @@ def _render_table(
     display: pd.DataFrame,
 ) -> None:
     """
-    Render filtered scored portfolio.
+    Render the filtered scored portfolio.
     """
 
     if display.empty:
 
         empty_state(
-            "No matching claims",
+            "No Matching Claims",
             (
                 "No scored claim matches the "
                 "current portfolio filters."
@@ -2280,18 +2298,12 @@ def _render_table(
 
     columns = [
         column
-
-        for column
-        in preferred_columns
-
-        if column
-        in display.columns
+        for column in preferred_columns
+        if column in display.columns
     ]
 
     st.dataframe(
-        display[
-            columns
-        ],
+        display[columns],
         use_container_width=True,
         hide_index=True,
         height=520,
@@ -2349,12 +2361,9 @@ def _render_table(
 
 def _source_claim(
     claim_id: str,
-) -> dict[
-    str,
-    Any,
-] | None:
+) -> dict[str, Any] | None:
     """
-    Retrieve complete source payload for one scored claim.
+    Retrieve the complete inference payload for one scored claim.
     """
 
     claims = (
@@ -2372,18 +2381,15 @@ def _source_claim(
                     "claim_id"
                 )
             )
-            == str(
-                claim_id
-            )
+            == str(claim_id)
         ):
-
             return claim
 
     return None
 
 
 # =============================================================================
-# Claim Analysis drill-down
+# Claim Analysis transfer
 # =============================================================================
 
 
@@ -2391,25 +2397,21 @@ def _open_claim_analysis(
     row: pd.Series,
 ) -> None:
     """
-    Transfer a scored portfolio claim to Claim Analysis.
+    Transfer one scored portfolio claim into Claim Analysis.
+
+    Claim Analysis can subsequently request its full TreeSHAP explanation
+    from the deployed API using the preserved source claim payload.
     """
 
-    claim_id = (
-        str(
-            row[
-                "claim_id"
-            ]
-        )
+    claim_id = str(
+        row["claim_id"]
     )
 
-    claim = (
-        _source_claim(
-            claim_id
-        )
+    claim = _source_claim(
+        claim_id
     )
 
     if claim is None:
-
         raise ValueError(
             (
                 "The source claim payload "
@@ -2417,13 +2419,30 @@ def _open_claim_analysis(
             )
         )
 
-    score = (
-        _bounded_score(
-            row[
-                "fraud_risk_score"
-            ]
-        )
+    score = _bounded_score(
+        row["fraud_risk_score"]
     )
+
+    metadata = (
+        st.session_state.get(
+            "batch_metadata"
+        )
+        or {}
+    )
+
+    model_name = row.get(
+        "model_name"
+    )
+
+    if pd.isna(model_name):
+        model_name = None
+
+    model_version = row.get(
+        "model_version"
+    )
+
+    if pd.isna(model_version):
+        model_version = None
 
     prediction = {
         "claim_id":
@@ -2433,35 +2452,21 @@ def _open_claim_analysis(
             score,
 
         "model_name":
-            row.get(
-                "model_name",
-                (
-                    st.session_state
-                    .get(
-                        "batch_metadata",
-                        {}
-                    )
-                    .get(
-                        "model_name"
-                    )
-                    or "—"
-                ),
+            (
+                model_name
+                or metadata.get(
+                    "model_name"
+                )
+                or "—"
             ),
 
         "model_version":
-            row.get(
-                "model_version",
-                (
-                    st.session_state
-                    .get(
-                        "batch_metadata",
-                        {}
-                    )
-                    .get(
-                        "model_version"
-                    )
-                    or "—"
-                ),
+            (
+                model_version
+                or metadata.get(
+                    "model_version"
+                )
+                or "—"
             ),
     }
 
@@ -2495,7 +2500,7 @@ def _render_claim_detail(
     frame: pd.DataFrame,
 ) -> None:
     """
-    Inspect one scored claim within portfolio context.
+    Inspect one scored claim in portfolio context.
     """
 
     if frame.empty:
@@ -2514,59 +2519,94 @@ def _render_claim_detail(
     )
 
     options = (
-        frame[
-            "claim_id"
-        ]
+        frame["claim_id"]
         .astype(str)
         .tolist()
     )
 
-    selected = (
-        st.selectbox(
-            "Claim",
-            options=options,
-            key="portfolio_claim_detail",
-            format_func=lambda claim_id:
-                (
-                    f"#{_safe_int(frame.loc[frame['claim_id'].astype(str) == str(claim_id), 'portfolio_rank'].iloc[0])}"
-                    f" • {claim_id}"
-                    f" • "
-                    f"{_bounded_score(frame.loc[frame['claim_id'].astype(str) == str(claim_id), 'fraud_risk_score'].iloc[0]):.2%}"
-                ),
+    lookup = (
+        frame
+        .assign(
+            _claim_id_text=(
+                frame["claim_id"]
+                .astype(str)
+            )
         )
+        .set_index(
+            "_claim_id_text",
+            drop=False,
+        )
+    )
+
+    def _claim_label(
+        claim_id: str,
+    ) -> str:
+
+        row = lookup.loc[
+            str(claim_id)
+        ]
+
+        if isinstance(
+            row,
+            pd.DataFrame,
+        ):
+            row = row.iloc[0]
+
+        rank = _safe_int(
+            row.get(
+                "portfolio_rank"
+            )
+        )
+
+        score = _bounded_score(
+            row.get(
+                "fraud_risk_score"
+            )
+        )
+
+        return (
+            f"#{rank} • "
+            f"{claim_id} • "
+            f"{score:.2%}"
+        )
+
+    selected = st.selectbox(
+        "Claim",
+        options=options,
+        key="portfolio_claim_detail",
+        format_func=_claim_label,
     )
 
     st.session_state.batch_selected_claim_id = (
         selected
     )
 
-    row = (
-        frame.loc[
-            frame[
-                "claim_id"
-            ]
-            .astype(str)
-            == str(
-                selected
-            )
-        ]
-        .iloc[
-            0
-        ]
-    )
+    row = lookup.loc[
+        str(selected)
+    ]
 
-    left, right = (
-        st.columns(
-            [
-                1.05,
-                1.25,
-            ],
-            gap="large",
+    if isinstance(
+        row,
+        pd.DataFrame,
+    ):
+        row = row.iloc[0]
+
+    score = _bounded_score(
+        row.get(
+            "fraud_risk_score"
         )
     )
 
+    left, right = st.columns(
+        [
+            1.05,
+            1.25,
+        ],
+        gap="large",
+    )
+
     # -------------------------------------------------------------------------
-    # Portfolio risk position
+    # Risk position
     # -------------------------------------------------------------------------
 
     with left:
@@ -2579,39 +2619,23 @@ def _render_claim_detail(
                 "### Risk Position"
             )
 
-            c1, c2 = (
-                st.columns(2)
-            )
+            c1, c2 = st.columns(2)
 
             with c1:
-
                 metric_card(
                     "Fraud Risk",
-                    (
-                        f"{_bounded_score(row.get('fraud_risk_score')):.2%}"
-                    ),
+                    f"{score:.2%}",
                     "Individual model score",
                     tone=(
                         "danger"
-                        if _bounded_score(
-                            row.get(
-                                "fraud_risk_score"
-                            )
-                        )
-                        >= 0.50
+                        if score >= 0.50
                         else "warning"
-                        if _bounded_score(
-                            row.get(
-                                "fraud_risk_score"
-                            )
-                        )
-                        >= 0.20
+                        if score >= 0.20
                         else "info"
                     ),
                 )
 
             with c2:
-
                 metric_card(
                     "Portfolio Rank",
                     (
@@ -2623,12 +2647,9 @@ def _render_claim_detail(
 
             st.write("")
 
-            c1, c2 = (
-                st.columns(2)
-            )
+            c1, c2 = st.columns(2)
 
             with c1:
-
                 metric_card(
                     "Risk Tier",
                     str(
@@ -2641,7 +2662,6 @@ def _render_claim_detail(
                 )
 
             with c2:
-
                 metric_card(
                     "Risk Percentile",
                     (
@@ -2652,12 +2672,10 @@ def _render_claim_detail(
 
             st.write("")
 
-            selected_for_review = (
-                bool(
-                    row.get(
-                        "selected_for_review",
-                        False,
-                    )
+            selected_for_review = bool(
+                row.get(
+                    "selected_for_review",
+                    False,
                 )
             )
 
@@ -2684,7 +2702,7 @@ def _render_claim_detail(
             )
 
     # -------------------------------------------------------------------------
-    # Claim context
+    # Business context
     # -------------------------------------------------------------------------
 
     with right:
@@ -2710,17 +2728,11 @@ def _render_claim_detail(
                 language=None,
             )
 
-            c1, c2 = (
-                st.columns(2)
-            )
+            c1, c2 = st.columns(2)
 
             with c1:
 
-                if (
-                    "claim_amount"
-                    in row.index
-                ):
-
+                if "claim_amount" in row.index:
                     st.write(
                         (
                             "**Claim amount:** "
@@ -2732,7 +2744,6 @@ def _render_claim_detail(
                     "requested_reimbursement"
                     in row.index
                 ):
-
                     st.write(
                         (
                             "**Requested reimbursement:** "
@@ -2740,25 +2751,17 @@ def _render_claim_detail(
                         )
                     )
 
-                if (
-                    "service_category"
-                    in row.index
-                ):
-
+                if "service_category" in row.index:
                     st.write(
                         (
                             "**Service:** "
-                            f"{row.get('service_category', '—')}"
+                            f"{_format_identifier(row.get('service_category'))}"
                         )
                     )
 
             with c2:
 
-                if (
-                    "provider_id"
-                    in row.index
-                ):
-
+                if "provider_id" in row.index:
                     st.write(
                         (
                             "**Provider:** "
@@ -2766,11 +2769,7 @@ def _render_claim_detail(
                         )
                     )
 
-                if (
-                    "customer_id"
-                    in row.index
-                ):
-
+                if "customer_id" in row.index:
                     st.write(
                         (
                             "**Customer:** "
@@ -2778,11 +2777,7 @@ def _render_claim_detail(
                         )
                     )
 
-                if (
-                    "service_code"
-                    in row.index
-                ):
-
+                if "service_code" in row.index:
                     st.write(
                         (
                             "**Service code:** "
@@ -2798,14 +2793,11 @@ def _render_claim_detail(
                 use_container_width=True,
                 key=(
                     "portfolio_open_claim_analysis_"
-                    + str(
-                        selected
-                    )
+                    + str(selected)
                 ),
             ):
 
                 try:
-
                     _open_claim_analysis(
                         row
                     )
@@ -2813,7 +2805,6 @@ def _render_claim_detail(
                     st.rerun()
 
                 except Exception as exc:
-
                     st.error(
                         (
                             "Unable to open Claim Analysis. "
@@ -2829,13 +2820,10 @@ def _render_claim_detail(
 
 def _render_exports(
     frame: pd.DataFrame,
-    metadata: dict[
-        str,
-        Any,
-    ],
+    metadata: dict[str, Any],
 ) -> None:
     """
-    Export full portfolio scores and current operational review set.
+    Export the complete portfolio and operational review population.
     """
 
     st.write("")
@@ -2850,55 +2838,48 @@ def _render_exports(
         eyebrow="OUTPUT",
     )
 
-    export = (
-        frame.copy()
-    )
+    export = frame.copy()
 
-    export[
-        "portfolio_source"
-    ] = (
+    export["portfolio_source"] = (
         metadata.get(
             "source",
             "",
         )
     )
 
-    export[
-        "scored_at"
-    ] = (
+    export["portfolio_source_type"] = (
+        metadata.get(
+            "source_type",
+            "",
+        )
+    )
+
+    export["scored_at"] = (
         metadata.get(
             "generated_at",
             "",
         )
     )
 
-    export[
-        "review_fraction"
-    ] = (
-        _safe_float(
-            metadata.get(
-                "review_fraction"
-            ),
-            DEFAULT_REVIEW_FRACTION,
-        )
+    export["review_fraction"] = _safe_float(
+        metadata.get(
+            "review_fraction"
+        ),
+        DEFAULT_REVIEW_FRACTION,
     )
 
     review = (
         export.loc[
-            export[
-                "selected_for_review"
-            ]
+            export["selected_for_review"]
         ]
         .copy()
     )
 
-    fraction = (
-        _safe_float(
-            metadata.get(
-                "review_fraction"
-            ),
-            DEFAULT_REVIEW_FRACTION,
-        )
+    fraction = _safe_float(
+        metadata.get(
+            "review_fraction"
+        ),
+        DEFAULT_REVIEW_FRACTION,
     )
 
     percentage_label = (
@@ -2909,12 +2890,9 @@ def _render_exports(
         )
     )
 
-    left, right = (
-        st.columns(2)
-    )
+    left, right = st.columns(2)
 
     with left:
-
         st.download_button(
             "Download All Scores",
             data=(
@@ -2934,7 +2912,6 @@ def _render_exports(
         )
 
     with right:
-
         st.download_button(
             (
                 f"Download Top "
@@ -2960,10 +2937,97 @@ def _render_exports(
     st.caption(
         (
             "Exports include model score, portfolio rank, "
-            "risk percentile, review-policy selection and "
-            "available source business attributes."
+            "risk percentile, operational review selection, "
+            "model identity and available source business attributes."
         )
     )
+
+
+# =============================================================================
+# Portfolio integrity
+# =============================================================================
+
+
+def _validate_stored_results(
+    frame: pd.DataFrame,
+) -> list[str]:
+    """
+    Validate the portfolio snapshot stored in Streamlit session state.
+    """
+
+    required_result_columns = {
+        "claim_id",
+        "fraud_risk_score",
+        "portfolio_rank",
+        "risk_percentile",
+        "risk_tier",
+        "selected_for_review",
+    }
+
+    missing = (
+        required_result_columns
+        - set(frame.columns)
+    )
+
+    errors: list[str] = []
+
+    if missing:
+        errors.append(
+            (
+                "Stored portfolio results are incomplete: "
+                + ", ".join(
+                    sorted(missing)
+                )
+            )
+        )
+
+        return errors
+
+    if frame.empty:
+        errors.append(
+            "Stored portfolio results are empty."
+        )
+
+        return errors
+
+    if (
+        frame["claim_id"]
+        .astype(str)
+        .duplicated()
+        .any()
+    ):
+        errors.append(
+            (
+                "Stored portfolio results contain "
+                "duplicate claim identifiers."
+            )
+        )
+
+    scores = pd.to_numeric(
+        frame["fraud_risk_score"],
+        errors="coerce",
+    )
+
+    if scores.isna().any():
+        errors.append(
+            (
+                "Stored portfolio results contain "
+                "invalid fraud-risk scores."
+            )
+        )
+
+    elif (
+        (scores < 0)
+        | (scores > 1)
+    ).any():
+        errors.append(
+            (
+                "Stored portfolio results contain "
+                "scores outside [0, 1]."
+            )
+        )
+
+    return errors
 
 
 # =============================================================================
@@ -2975,7 +3039,7 @@ def render(
     client,
 ) -> None:
     """
-    Render complete portfolio-scoring workspace.
+    Render the complete portfolio-scoring workspace.
     """
 
     _initialize_state()
@@ -2993,21 +3057,18 @@ def render(
     # Header controls
     # -------------------------------------------------------------------------
 
-    left, right = (
-        st.columns(
-            [
-                4,
-                1,
-            ]
-        )
+    left, right = st.columns(
+        [
+            4,
+            1,
+        ]
     )
 
     with left:
-
         st.caption(
             (
                 "Portfolio Scoring evaluates every claim independently "
-                "and then ranks the resulting scores across the current "
+                "and ranks the resulting scores across the current "
                 "population. Investigation Queue converts those scores "
                 "into an operational human-review workflow."
             )
@@ -3020,7 +3081,6 @@ def render(
             use_container_width=True,
             key="reset_portfolio_scoring",
         ):
-
             _reset_portfolio()
 
             st.rerun()
@@ -3035,10 +3095,8 @@ def render(
         client
     )
 
-    frame = (
-        st.session_state.get(
-            "batch_results"
-        )
+    frame = st.session_state.get(
+        "batch_results"
     )
 
     metadata = (
@@ -3050,6 +3108,10 @@ def render(
 
     if (
         frame is None
+        or not isinstance(
+            frame,
+            pd.DataFrame,
+        )
         or frame.empty
     ):
 
@@ -3072,35 +3134,27 @@ def render(
         return
 
     # -------------------------------------------------------------------------
-    # Portfolio integrity
+    # Stored-result integrity
     # -------------------------------------------------------------------------
 
-    required_result_columns = {
-        "claim_id",
-        "fraud_risk_score",
-        "portfolio_rank",
-        "risk_tier",
-        "selected_for_review",
-    }
-
-    missing = (
-        required_result_columns
-        - set(
-            frame.columns
+    integrity_errors = (
+        _validate_stored_results(
+            frame
         )
     )
 
-    if missing:
+    if integrity_errors:
 
-        st.error(
+        for message in integrity_errors:
+            st.error(message)
+
+        info_panel(
+            "Portfolio Snapshot Invalid",
             (
-                "Stored portfolio results are incomplete: "
-                + ", ".join(
-                    sorted(
-                        missing
-                    )
-                )
-            )
+                "Reset the current portfolio and run scoring again "
+                "before continuing with analytics or investigation."
+            ),
+            tone="danger",
         )
 
         return
@@ -3121,6 +3175,11 @@ def render(
         frame
     )
 
+    _render_review_concentration(
+        frame,
+        metadata,
+    )
+
     _render_quantiles(
         frame
     )
@@ -3129,10 +3188,8 @@ def render(
         frame
     )
 
-    filtered = (
-        _render_filters(
-            frame
-        )
+    filtered = _render_filters(
+        frame
     )
 
     _render_table(

@@ -56,6 +56,27 @@ TONE_COLORS: dict[
 }
 
 
+TONE_ICONS: dict[
+    Tone,
+    str,
+] = {
+    "neutral":
+        "●",
+
+    "info":
+        "●",
+
+    "success":
+        "●",
+
+    "warning":
+        "●",
+
+    "danger":
+        "●",
+}
+
+
 # =============================================================================
 # Internal helpers
 # =============================================================================
@@ -95,14 +116,24 @@ def _clamp_score(
     score: float,
 ) -> float:
     """
-    Clamp a probability-like score to the closed interval [0, 1].
+    Clamp a probability-like score to [0, 1].
     """
+
+    try:
+
+        score = float(
+            score
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        score = 0.0
 
     return min(
         max(
-            float(
-                score
-            ),
+            score,
             0.0,
         ),
         1.0,
@@ -113,10 +144,10 @@ def _render_html(
     markup: str,
 ) -> None:
     """
-    Render HTML through Streamlit.
+    Render HTML safely through Streamlit.
 
-    Multi-line markup is normalized before rendering so that readable
-    Python HTML strings cannot accidentally become Markdown code blocks.
+    Multi-line markup is normalized before rendering so readable Python
+    strings cannot accidentally become Markdown code blocks.
     """
 
     clean_markup = (
@@ -136,10 +167,10 @@ def _render_compact_html(
     markup: str,
 ) -> None:
     """
-    Render compact single-line HTML.
+    Render whitespace-normalized HTML.
 
-    This renderer is used for components such as the risk gauge where
-    Markdown whitespace interpretation must be eliminated completely.
+    This is useful for components where Markdown whitespace interpretation
+    must be completely eliminated.
     """
 
     clean_markup = (
@@ -174,10 +205,8 @@ def section_header(
     Render a reusable section heading.
     """
 
-    safe_title = (
-        _escape(
-            title
-        )
+    safe_title = _escape(
+        title
     )
 
     safe_subtitle = (
@@ -234,19 +263,87 @@ def section_header(
 def page_intro(
     title: str,
     subtitle: str,
+    *,
+    eyebrow: str | None = None,
 ) -> None:
     """
     Render a larger page-level introduction.
     """
 
+    eyebrow_markup = (
+        (
+            '<div class="page-intro-eyebrow">'
+            f"{_escape(eyebrow)}"
+            "</div>"
+        )
+        if eyebrow
+        else ""
+    )
+
     markup = (
         '<div class="page-intro">'
+        f"{eyebrow_markup}"
         '<div class="page-intro-title">'
         f"{_escape(title)}"
         "</div>"
         '<div class="page-intro-subtitle">'
         f"{_escape(subtitle)}"
         "</div>"
+        "</div>"
+    )
+
+    _render_html(
+        markup
+    )
+
+
+# =============================================================================
+# Surface wrappers
+# =============================================================================
+
+
+def surface_card(
+    title: str | None = None,
+    subtitle: str | None = None,
+    *,
+    tone: Tone = "neutral",
+) -> None:
+    """
+    Render a lightweight content-surface header.
+
+    Intended for reusable visual grouping where a full Streamlit container
+    is not necessary.
+    """
+
+    color = _tone_color(
+        tone
+    )
+
+    title_markup = (
+        (
+            '<div class="surface-card-title">'
+            f"{_escape(title)}"
+            "</div>"
+        )
+        if title
+        else ""
+    )
+
+    subtitle_markup = (
+        (
+            '<div class="surface-card-subtitle">'
+            f"{_escape(subtitle)}"
+            "</div>"
+        )
+        if subtitle
+        else ""
+    )
+
+    markup = (
+        '<div class="surface-card-heading" '
+        f'style="--surface-accent:{color};">'
+        f"{title_markup}"
+        f"{subtitle_markup}"
         "</div>"
     )
 
@@ -269,30 +366,25 @@ def metric_card(
 ) -> None:
     """
     Render a reusable premium KPI card.
+
+    Designed to avoid Streamlit native metric truncation for long business
+    values such as recommendations and status labels.
     """
 
-    safe_label = (
-        _escape(
-            label
-        )
+    safe_label = _escape(
+        label
     )
 
-    safe_value = (
-        _escape(
-            value
-        )
+    safe_value = _escape(
+        value
     )
 
-    safe_helper = (
-        _escape(
-            helper
-        )
+    safe_helper = _escape(
+        helper
     )
 
-    color = (
-        _tone_color(
-            tone
-        )
+    color = _tone_color(
+        tone
     )
 
     helper_markup = (
@@ -329,8 +421,51 @@ def metric_card(
     )
 
 
+def mini_metric(
+    label: str,
+    value: str,
+    *,
+    helper: str | None = None,
+    tone: Tone = "neutral",
+) -> None:
+    """
+    Render a compact metric suitable for diagnostics and dense layouts.
+    """
+
+    color = _tone_color(
+        tone
+    )
+
+    helper_markup = (
+        (
+            '<div class="mini-metric-helper">'
+            f"{_escape(helper)}"
+            "</div>"
+        )
+        if helper
+        else ""
+    )
+
+    markup = (
+        '<div class="mini-metric" '
+        f'style="--mini-accent:{color};">'
+        '<div class="mini-metric-label">'
+        f"{_escape(label)}"
+        "</div>"
+        '<div class="mini-metric-value">'
+        f"{_escape(value)}"
+        "</div>"
+        f"{helper_markup}"
+        "</div>"
+    )
+
+    _render_html(
+        markup
+    )
+
+
 # =============================================================================
-# Generic badge
+# Generic badges
 # =============================================================================
 
 
@@ -344,10 +479,8 @@ def badge(
     Render a compact semantic badge.
     """
 
-    color = (
-        _tone_color(
-            tone
-        )
+    color = _tone_color(
+        tone
     )
 
     prefix = (
@@ -366,11 +499,6 @@ def badge(
     _render_compact_html(
         markup
     )
-
-
-# =============================================================================
-# API status
-# =============================================================================
 
 
 def status_badge(
@@ -400,11 +528,6 @@ def status_badge(
     )
 
 
-# =============================================================================
-# Risk badge
-# =============================================================================
-
-
 def risk_badge(
     score: float,
 ) -> None:
@@ -412,22 +535,16 @@ def risk_badge(
     Render the categorical risk tier below the fraud-risk gauge.
     """
 
-    score = (
-        _clamp_score(
-            score
-        )
+    score = _clamp_score(
+        score
     )
 
-    tier = (
-        risk_tier(
-            score
-        )
+    tier = risk_tier(
+        score
     )
 
-    color = (
-        risk_color(
-            score
-        )
+    color = risk_color(
+        score
     )
 
     markup = (
@@ -455,27 +572,20 @@ def risk_gauge(
     """
     Render a responsive circular fraud-risk gauge.
 
-    The markup is deliberately built as compact HTML rather than a
-    formatted multi-line block. This avoids Streamlit/Markdown treating
-    indented tags such as <strong> and <span> as code blocks.
+    Compact HTML is used deliberately to prevent Streamlit/Markdown from
+    treating nested tags as code blocks.
     """
 
-    score = (
-        _clamp_score(
-            score
-        )
+    score = _clamp_score(
+        score
     )
 
-    tier = (
-        risk_tier(
-            score
-        )
+    tier = risk_tier(
+        score
     )
 
-    color = (
-        risk_color(
-            score
-        )
+    color = risk_color(
+        score
     )
 
     degrees = (
@@ -483,18 +593,14 @@ def risk_gauge(
         * 360.0
     )
 
-    safe_tier = (
-        _escape(
-            tier
-        )
+    safe_tier = _escape(
+        tier
     )
 
-    aria_label = (
-        _escape(
-            (
-                f"Fraud risk {score:.1%}, "
-                f"risk tier {tier}"
-            )
+    aria_label = _escape(
+        (
+            f"Fraud risk {score:.1%}, "
+            f"risk tier {tier}"
         )
     )
 
@@ -524,6 +630,204 @@ def risk_gauge(
     )
 
     _render_compact_html(
+        markup
+    )
+
+
+# =============================================================================
+# Information panels
+# =============================================================================
+
+
+def info_panel(
+    title: str,
+    message: str,
+    *,
+    tone: Tone = "info",
+) -> None:
+    """
+    Render a semantic information panel.
+    """
+
+    color = _tone_color(
+        tone
+    )
+
+    markup = (
+        '<div class="info-panel" '
+        f'style="--panel-color:{color};">'
+        '<div class="info-panel-title">'
+        f"{_escape(title)}"
+        "</div>"
+        '<div class="info-panel-message">'
+        f"{_escape(message)}"
+        "</div>"
+        "</div>"
+    )
+
+    _render_html(
+        markup
+    )
+
+
+def decision_panel(
+    title: str,
+    message: str,
+    *,
+    tone: Tone = "info",
+    caption: str | None = None,
+) -> None:
+    """
+    Render a stronger action-oriented decision-support panel.
+    """
+
+    color = _tone_color(
+        tone
+    )
+
+    caption_markup = (
+        (
+            '<div class="decision-panel-caption">'
+            f"{_escape(caption)}"
+            "</div>"
+        )
+        if caption
+        else ""
+    )
+
+    markup = (
+        '<div class="decision-panel" '
+        f'style="--decision-color:{color};">'
+        '<div class="decision-panel-header">'
+        '<span class="decision-panel-dot"></span>'
+        '<div class="decision-panel-title">'
+        f"{_escape(title)}"
+        "</div>"
+        "</div>"
+        '<div class="decision-panel-message">'
+        f"{_escape(message)}"
+        "</div>"
+        f"{caption_markup}"
+        "</div>"
+    )
+
+    _render_html(
+        markup
+    )
+
+
+# =============================================================================
+# SHAP / model-driver components
+# =============================================================================
+
+
+def driver_card(
+    label: str,
+    *,
+    feature_value: str | None = None,
+    contribution: float | None = None,
+    direction: Literal[
+        "increase",
+        "decrease",
+        "neutral",
+    ] = "neutral",
+) -> None:
+    """
+    Render one local model-driver card.
+
+    Intended for TreeSHAP explanations and other signed feature attributions.
+    """
+
+    direction_map = {
+        "increase":
+            (
+                "danger",
+                "INCREASES MODEL RISK",
+            ),
+
+        "decrease":
+            (
+                "success",
+                "REDUCES MODEL RISK",
+            ),
+
+        "neutral":
+            (
+                "neutral",
+                "NEUTRAL CONTRIBUTION",
+            ),
+    }
+
+    tone, direction_label = (
+        direction_map[
+            direction
+        ]
+    )
+
+    color = _tone_color(
+        tone
+    )
+
+    value_markup = (
+        (
+            '<div class="driver-value">'
+            '<span>Model value</span>'
+            f"<strong>{_escape(feature_value)}</strong>"
+            "</div>"
+        )
+        if feature_value is not None
+        else ""
+    )
+
+    contribution_markup = ""
+
+    if contribution is not None:
+
+        try:
+
+            contribution_value = float(
+                contribution
+            )
+
+            contribution_text = (
+                f"{contribution_value:+.4f}"
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+
+            contribution_text = (
+                str(
+                    contribution
+                )
+            )
+
+        contribution_markup = (
+            '<div class="driver-contribution">'
+            '<span>SHAP contribution</span>'
+            f"<strong>{_escape(contribution_text)}</strong>"
+            "</div>"
+        )
+
+    markup = (
+        '<div class="driver-card" '
+        f'style="--driver-color:{color};">'
+        '<div class="driver-direction">'
+        f"{_escape(direction_label)}"
+        "</div>"
+        '<div class="driver-label">'
+        f"{_escape(label)}"
+        "</div>"
+        '<div class="driver-meta">'
+        f"{value_markup}"
+        f"{contribution_markup}"
+        "</div>"
+        "</div>"
+    )
+
+    _render_html(
         markup
     )
 
@@ -571,39 +875,75 @@ def empty_state(
 
 
 # =============================================================================
-# Information panels
+# Key/value list
 # =============================================================================
 
 
-def info_panel(
-    title: str,
-    message: str,
+def key_value_row(
+    label: str,
+    value: str,
     *,
-    tone: Tone = "info",
+    monospace: bool = False,
 ) -> None:
     """
-    Render a semantic information panel.
+    Render one dense key/value diagnostic row.
     """
 
-    color = (
-        _tone_color(
-            tone
-        )
+    value_class = (
+        " key-value-monospace"
+        if monospace
+        else ""
     )
 
     markup = (
-        '<div class="info-panel" '
-        f'style="--panel-color:{color};">'
-        '<div class="info-panel-title">'
-        f"{_escape(title)}"
+        '<div class="key-value-row">'
+        '<div class="key-value-label">'
+        f"{_escape(label)}"
         "</div>"
-        '<div class="info-panel-message">'
-        f"{_escape(message)}"
+        f'<div class="key-value-value{value_class}">'
+        f"{_escape(value)}"
         "</div>"
         "</div>"
     )
 
     _render_html(
+        markup
+    )
+
+
+# =============================================================================
+# Section separator
+# =============================================================================
+
+
+def soft_divider(
+    label: str | None = None,
+) -> None:
+    """
+    Render a visually light separator.
+
+    Optional labels are useful inside dense operational panels.
+    """
+
+    label_markup = (
+        (
+            '<span class="soft-divider-label">'
+            f"{_escape(label)}"
+            "</span>"
+        )
+        if label
+        else ""
+    )
+
+    markup = (
+        '<div class="soft-divider">'
+        '<div class="soft-divider-line"></div>'
+        f"{label_markup}"
+        '<div class="soft-divider-line"></div>'
+        "</div>"
+    )
+
+    _render_compact_html(
         markup
     )
 

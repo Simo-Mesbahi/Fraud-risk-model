@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,9 @@ import streamlit as st
 from components import (
     human_review_notice,
     info_panel,
+    key_value_row,
     metric_card,
+    mini_metric,
     section_header,
 )
 
@@ -36,6 +39,12 @@ ARTIFACTS_DIR = (
 )
 
 
+METADATA_DIR = (
+    ARTIFACTS_DIR
+    / "metadata"
+)
+
+
 EXPLAINABILITY_DIR = (
     ARTIFACTS_DIR
     / "explainability"
@@ -48,26 +57,26 @@ FIGURES_DIR = (
 )
 
 
-METADATA_PATH = (
-    ARTIFACTS_DIR
-    / "metadata"
-    / "health_fraud_model_metadata.json"
-)
-
-
 FINAL_EVALUATION_DIR = (
-    ARTIFACTS_DIR
-    / "metadata"
+    METADATA_DIR
     / "final_evaluation"
 )
 
 
+METADATA_PATH = (
+    METADATA_DIR
+    / "health_fraud_model_metadata.json"
+)
+
+
 # =============================================================================
-# Constants
+# Analytical artifacts
 # =============================================================================
 
 
-TOP_SHAP_FEATURES = 15
+BUSINESS_IMPORTANCE_FILE = (
+    "business_feature_importance.csv"
+)
 
 
 MECHANISM_SCORE_FILE = (
@@ -85,9 +94,7 @@ DIFFICULTY_SCORE_FILE = (
 )
 
 
-BUSINESS_IMPORTANCE_FILE = (
-    "business_feature_importance.csv"
-)
+TOP_SHAP_FEATURES = 15
 
 
 EVALUATION_FIGURES = [
@@ -103,8 +110,8 @@ EVALUATION_FIGURES = [
         "02_precision_recall_test.png",
         "Precision–Recall Curve",
         (
-            "Precision/recall trade-off on the "
-            "out-of-time test population."
+            "Precision and recall trade-off on "
+            "the out-of-time test population."
         ),
     ),
     (
@@ -112,23 +119,23 @@ EVALUATION_FIGURES = [
         "ROC Curve",
         (
             "Global ranking discrimination "
-            "across decision thresholds."
+            "across possible decision thresholds."
         ),
     ),
     (
         "04_calibration_test.png",
         "Calibration Curve",
         (
-            "Agreement between predicted risk "
-            "and observed synthetic fraud frequency."
+            "Agreement between predicted risk and "
+            "observed synthetic fraud frequency."
         ),
     ),
     (
         "05_capacity_curve.png",
         "Investigation Capacity",
         (
-            "Fraud capture as investigation "
-            "capacity increases."
+            "Fraud capture as operational "
+            "investigation capacity increases."
         ),
     ),
 ]
@@ -138,20 +145,59 @@ ERROR_FIGURES = [
     (
         "case_false_negative_extreme.png",
         "Extreme False Negative",
+        (
+            "High-severity fraudulent claim that "
+            "received insufficient model risk."
+        ),
     ),
     (
         "case_false_positive_high_risk.png",
         "High-Risk False Positive",
+        (
+            "Legitimate claim receiving a high "
+            "fraud-risk score."
+        ),
     ),
     (
         "case_amount_inflation_false_negative.png",
         "Amount Inflation False Negative",
+        (
+            "Amount-inflation fraud pattern not "
+            "sufficiently prioritized by the model."
+        ),
     ),
     (
         "case_legitimate_anomaly_not_reviewed.png",
         "Legitimate Anomaly",
+        (
+            "Unusual but legitimate behavior illustrating "
+            "the distinction between anomaly and fraud."
+        ),
     ),
 ]
+
+
+# =============================================================================
+# Data structures
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class ArtifactCheck:
+    """
+    Analytical artifact availability record.
+    """
+
+    label: str
+    path: Path
+    category: str
+
+    @property
+    def available(self) -> bool:
+        return (
+            self.path.exists()
+            and self.path.is_file()
+        )
 
 
 # =============================================================================
@@ -164,51 +210,11 @@ def _safe_float(
     default: float | None = None,
 ) -> float | None:
     """
-    Convert a value to a finite float.
+    Convert a value into a finite float.
     """
 
     try:
-
-        result = float(
-            value
-        )
-
-        if np.isfinite(
-            result
-        ):
-            return result
-
-    except (
-        TypeError,
-        ValueError,
-    ):
-        pass
-
-    return default
-
-
-def _safe_int(
-    value: Any,
-    default: int | None = None,
-) -> int | None:
-    """
-    Convert a numeric-like value safely to integer.
-    """
-
-    try:
-
-        if pd.isna(
-            value
-        ):
-            return default
-
-        return int(
-            round(
-                float(
-                    value
-                )
-            )
-        )
+        result = float(value)
 
     except (
         TypeError,
@@ -216,26 +222,61 @@ def _safe_int(
     ):
         return default
 
+    if not np.isfinite(result):
+        return default
+
+    return result
+
+
+def _safe_int(
+    value: Any,
+    default: int | None = None,
+) -> int | None:
+    """
+    Convert a numeric-like value safely into an integer.
+    """
+
+    try:
+        if pd.isna(value):
+            return default
+
+        result = float(value)
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return default
+
+    if not np.isfinite(result):
+        return default
+
+    return int(
+        round(result)
+    )
+
 
 def _pretty_name(
     value: Any,
 ) -> str:
     """
-    Convert a machine feature / category name into readable text.
+    Convert machine-oriented names into readable labels.
     """
 
     if value is None:
         return "—"
 
+    text = str(value).strip()
+
+    if not text:
+        return "—"
+
     return (
-        str(
-            value
-        )
+        text
         .replace(
             "_",
             " ",
         )
-        .strip()
         .title()
     )
 
@@ -245,13 +286,11 @@ def _format_metric(
     digits: int = 3,
 ) -> str:
     """
-    Format decimal metric safely.
+    Format a decimal metric.
     """
 
-    number = (
-        _safe_float(
-            value
-        )
+    number = _safe_float(
+        value
     )
 
     if number is None:
@@ -267,13 +306,11 @@ def _format_percent(
     digits: int = 1,
 ) -> str:
     """
-    Format probability / ratio safely.
+    Format a ratio as percentage.
     """
 
-    number = (
-        _safe_float(
-            value
-        )
+    number = _safe_float(
+        value
     )
 
     if number is None:
@@ -288,20 +325,33 @@ def _format_lift(
     value: Any,
 ) -> str:
     """
-    Format lift metric.
+    Format lift relative to random review.
     """
 
-    number = (
-        _safe_float(
-            value
-        )
+    number = _safe_float(
+        value
     )
 
     if number is None:
         return "—"
 
+    return f"{number:.2f}×"
+
+
+def _nonempty_dict(
+    value: Any,
+) -> dict[str, Any]:
+    """
+    Normalize arbitrary values into dictionaries.
+    """
+
     return (
-        f"{number:.2f}×"
+        value
+        if isinstance(
+            value,
+            dict,
+        )
+        else {}
     )
 
 
@@ -317,25 +367,30 @@ def _read_csv(
     path_string: str,
 ) -> pd.DataFrame:
     """
-    Read analytical CSV defensively.
+    Read an analytical CSV defensively.
     """
 
     path = Path(
         path_string
     )
 
-    if not path.exists():
+    if (
+        not path.exists()
+        or not path.is_file()
+    ):
         return pd.DataFrame()
 
     try:
-
-        frame = (
-            pd.read_csv(
-                path
-            )
+        frame = pd.read_csv(
+            path
         )
 
-    except Exception:
+    except (
+        OSError,
+        ValueError,
+        pd.errors.ParserError,
+        pd.errors.EmptyDataError,
+    ):
         return pd.DataFrame()
 
     return frame
@@ -348,14 +403,17 @@ def _read_metadata(
     path_string: str,
 ) -> dict[str, Any]:
     """
-    Read frozen-model metadata defensively.
+    Read frozen-model metadata.
     """
 
     path = Path(
         path_string
     )
 
-    if not path.exists():
+    if (
+        not path.exists()
+        or not path.is_file()
+    ):
         return {}
 
     try:
@@ -365,10 +423,8 @@ def _read_metadata(
             encoding="utf-8",
         ) as file:
 
-            payload = (
-                json.load(
-                    file
-                )
+            payload = json.load(
+                file
             )
 
     except (
@@ -377,57 +433,54 @@ def _read_metadata(
     ):
         return {}
 
-    if not isinstance(
-        payload,
-        dict,
-    ):
-        return {}
-
-    return payload
+    return (
+        payload
+        if isinstance(
+            payload,
+            dict,
+        )
+        else {}
+    )
 
 
 def _load_csv(
     filename: str,
 ) -> pd.DataFrame:
     """
-    Resolve one explainability CSV.
+    Load one explainability artifact.
     """
 
-    return (
-        _read_csv(
-            str(
-                EXPLAINABILITY_DIR
-                / filename
-            )
+    return _read_csv(
+        str(
+            EXPLAINABILITY_DIR
+            / filename
         )
     )
 
 
 def _load_metadata() -> dict[str, Any]:
     """
-    Resolve model metadata.
+    Load frozen-model metadata.
     """
 
-    return (
-        _read_metadata(
-            str(
-                METADATA_PATH
-            )
+    return _read_metadata(
+        str(
+            METADATA_PATH
         )
     )
 
 
 def _existing_image(
     directory: Path,
-    name: str,
+    filename: str,
 ) -> Path | None:
     """
-    Return image path only when the file exists.
+    Resolve an existing image artifact.
     """
 
     path = (
         directory
-        / name
+        / filename
     )
 
     if (
@@ -440,7 +493,7 @@ def _existing_image(
 
 
 # =============================================================================
-# Runtime model information
+# Runtime model contract
 # =============================================================================
 
 
@@ -451,47 +504,42 @@ def _read_runtime_model(
     str | None,
 ]:
     """
-    Retrieve the model contract exposed by the live API.
+    Retrieve the contract of the model currently served by the API.
 
-    Local artifact metadata remains useful for evaluation statistics,
-    while the API is the source of truth for the currently served model.
+    Runtime API information is authoritative for deployment state.
+    Local metadata remains authoritative for frozen evaluation results.
     """
 
     try:
-
-        payload = (
-            client.model_info()
-        )
-
-        if not isinstance(
-            payload,
-            dict,
-        ):
-            return (
-                {},
-                (
-                    "Inference API returned an invalid "
-                    "model contract."
-                ),
-            )
-
-        return (
-            payload,
-            None,
-        )
+        payload = client.model_info()
 
     except Exception as exc:
 
         return (
             {},
-            str(
-                exc
+            str(exc),
+        )
+
+    if not isinstance(
+        payload,
+        dict,
+    ):
+        return (
+            {},
+            (
+                "Inference API returned an invalid "
+                "model contract."
             ),
         )
 
+    return (
+        payload,
+        None,
+    )
+
 
 # =============================================================================
-# Metadata helpers
+# Metadata access
 # =============================================================================
 
 
@@ -499,23 +547,14 @@ def _final_metrics(
     metadata: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Return final out-of-time metrics.
+    Return frozen out-of-time evaluation metrics.
     """
 
-    metrics = (
+    return _nonempty_dict(
         metadata.get(
-            "final_test_metrics",
-            {},
+            "final_test_metrics"
         )
     )
-
-    if not isinstance(
-        metrics,
-        dict,
-    ):
-        return {}
-
-    return metrics
 
 
 def _review_policy(
@@ -523,40 +562,82 @@ def _review_policy(
     runtime_model: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Resolve deployed review policy, preferring live API contract.
+    Resolve review policy.
+
+    Runtime contract takes precedence because it represents
+    the model currently served by the API.
     """
 
-    runtime_policy = (
+    runtime_policy = _nonempty_dict(
         runtime_model.get(
             "review_policy"
         )
     )
 
-    if isinstance(
-        runtime_policy,
-        dict,
-    ):
+    if runtime_policy:
         return runtime_policy
 
-    metadata_policy = (
+    return _nonempty_dict(
         metadata.get(
-            "review_policy",
-            {},
+            "review_policy"
         )
     )
 
-    if isinstance(
-        metadata_policy,
-        dict,
-    ):
-        return metadata_policy
 
-    return {}
+def _runtime_explainability(
+    runtime_model: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Resolve live explainability contract.
+    """
+
+    return _nonempty_dict(
+        runtime_model.get(
+            "explainability"
+        )
+    )
 
 
 # =============================================================================
 # Contract consistency
 # =============================================================================
+
+
+def _normalized_contract_value(
+    value: Any,
+) -> Any:
+    """
+    Normalize values before contract comparison.
+    """
+
+    if value is None:
+        return None
+
+    if isinstance(
+        value,
+        bool,
+    ):
+        return value
+
+    if isinstance(
+        value,
+        (int, np.integer),
+    ):
+        return int(value)
+
+    if isinstance(
+        value,
+        (float, np.floating),
+    ):
+        result = float(value)
+
+        return (
+            result
+            if np.isfinite(result)
+            else None
+        )
+
+    return str(value).strip()
 
 
 def _contract_consistency(
@@ -565,9 +646,12 @@ def _contract_consistency(
 ) -> tuple[
     bool | None,
     list[str],
+    int,
 ]:
     """
-    Compare local frozen metadata with the currently served API model.
+    Compare frozen metadata against the currently served model.
+
+    Only fields available in both contracts are compared.
     """
 
     if (
@@ -577,6 +661,7 @@ def _contract_consistency(
         return (
             None,
             [],
+            0,
         )
 
     comparisons = [
@@ -590,35 +675,33 @@ def _contract_consistency(
         ),
         (
             "target",
-            "Target",
+            "Prediction target",
         ),
         (
             "feature_count",
-            "Feature count",
+            "Source feature count",
+        ),
+        (
+            "transformed_feature_count",
+            "Transformed feature count",
+        ),
+        (
+            "probability_method",
+            "Probability method",
         ),
     ]
 
-    mismatches: list[
-        str
-    ] = []
-
+    mismatches: list[str] = []
     compared = 0
 
-    for (
-        key,
-        label,
-    ) in comparisons:
+    for key, label in comparisons:
 
         local_value = (
-            metadata.get(
-                key
-            )
+            metadata.get(key)
         )
 
         runtime_value = (
-            runtime_model.get(
-                key
-            )
+            runtime_model.get(key)
         )
 
         if (
@@ -630,35 +713,299 @@ def _contract_consistency(
         compared += 1
 
         if (
-            str(
+            _normalized_contract_value(
                 local_value
             )
-            != str(
+            !=
+            _normalized_contract_value(
                 runtime_value
             )
         ):
 
             mismatches.append(
                 (
-                    f"{label}: artifact={local_value} "
-                    f"• runtime={runtime_value}"
+                    f"{label}: "
+                    f"artifact={local_value} • "
+                    f"runtime={runtime_value}"
+                )
+            )
+
+    # -------------------------------------------------------------------------
+    # Review policy
+    # -------------------------------------------------------------------------
+
+    local_policy = _nonempty_dict(
+        metadata.get(
+            "review_policy"
+        )
+    )
+
+    runtime_policy = _nonempty_dict(
+        runtime_model.get(
+            "review_policy"
+        )
+    )
+
+    for key, label in [
+        (
+            "type",
+            "Review policy type",
+        ),
+        (
+            "fraction",
+            "Review fraction",
+        ),
+    ]:
+
+        local_value = (
+            local_policy.get(key)
+        )
+
+        runtime_value = (
+            runtime_policy.get(key)
+        )
+
+        if (
+            local_value is None
+            or runtime_value is None
+        ):
+            continue
+
+        compared += 1
+
+        local_number = _safe_float(
+            local_value
+        )
+
+        runtime_number = _safe_float(
+            runtime_value
+        )
+
+        if (
+            key == "fraction"
+            and local_number is not None
+            and runtime_number is not None
+        ):
+
+            if not np.isclose(
+                local_number,
+                runtime_number,
+                rtol=0.0,
+                atol=1e-12,
+            ):
+                mismatches.append(
+                    (
+                        f"{label}: "
+                        f"artifact={local_value} • "
+                        f"runtime={runtime_value}"
+                    )
+                )
+
+        elif (
+            str(local_value)
+            != str(runtime_value)
+        ):
+
+            mismatches.append(
+                (
+                    f"{label}: "
+                    f"artifact={local_value} • "
+                    f"runtime={runtime_value}"
                 )
             )
 
     if compared == 0:
-
         return (
             None,
             [],
+            0,
         )
 
     return (
-        len(
-            mismatches
-        )
-        == 0,
+        not mismatches,
         mismatches,
+        compared,
     )
+
+
+# =============================================================================
+# Model status
+# =============================================================================
+
+
+def _render_runtime_status(
+    metadata: dict[str, Any],
+    runtime_model: dict[str, Any],
+    runtime_error: str | None,
+) -> None:
+    """
+    Render deployment and artifact synchronization status.
+    """
+
+    section_header(
+        "Model Status",
+        (
+            "Live inference availability and consistency "
+            "between deployment and frozen analytical artifacts."
+        ),
+        eyebrow="RUNTIME",
+    )
+
+    (
+        consistent,
+        mismatches,
+        compared,
+    ) = _contract_consistency(
+        metadata,
+        runtime_model,
+    )
+
+    explainability = (
+        _runtime_explainability(
+            runtime_model
+        )
+    )
+
+    explainability_available = (
+        explainability.get(
+            "available"
+        )
+        is True
+    )
+
+    c1, c2, c3, c4 = (
+        st.columns(4)
+    )
+
+    with c1:
+
+        metric_card(
+            "Inference API",
+            (
+                "ONLINE"
+                if runtime_model
+                else "UNAVAILABLE"
+            ),
+            (
+                "Runtime contract loaded"
+                if runtime_model
+                else "Runtime contract unavailable"
+            ),
+            tone=(
+                "success"
+                if runtime_model
+                else "danger"
+            ),
+        )
+
+    with c2:
+
+        metric_card(
+            "Model Version",
+            str(
+                runtime_model.get(
+                    "model_version"
+                )
+                or metadata.get(
+                    "model_version"
+                )
+                or "—"
+            ),
+            "Currently evaluated deployment",
+            tone="info",
+        )
+
+    with c3:
+
+        metric_card(
+            "Contract",
+            (
+                "CONSISTENT"
+                if consistent is True
+                else (
+                    "MISMATCH"
+                    if consistent is False
+                    else "UNVERIFIED"
+                )
+            ),
+            (
+                f"{compared} fields compared"
+                if compared
+                else "No comparable contract"
+            ),
+            tone=(
+                "success"
+                if consistent is True
+                else (
+                    "danger"
+                    if consistent is False
+                    else "warning"
+                )
+            ),
+        )
+
+    with c4:
+
+        metric_card(
+            "TreeSHAP",
+            (
+                "READY"
+                if explainability_available
+                else "UNAVAILABLE"
+            ),
+            (
+                str(
+                    explainability.get(
+                        "method"
+                    )
+                    or "Runtime explainability"
+                )
+            ),
+            tone=(
+                "success"
+                if explainability_available
+                else "warning"
+            ),
+        )
+
+    if runtime_error:
+
+        st.write("")
+
+        info_panel(
+            "Runtime Verification Failed",
+            (
+                "The frozen analytical artifacts remain available, "
+                "but the currently served model could not be verified "
+                f"through the inference API: {runtime_error}"
+            ),
+            tone="warning",
+        )
+
+    if mismatches:
+
+        st.write("")
+
+        info_panel(
+            "Model Contract Mismatch",
+            (
+                "The deployment contract differs from the frozen "
+                "metadata used by this analytical workspace. "
+                "Evaluation results should not be attributed to "
+                "the runtime model until the discrepancy is resolved."
+            ),
+            tone="danger",
+        )
+
+        with st.expander(
+            "Contract differences",
+            expanded=True,
+        ):
+
+            for mismatch in mismatches:
+                st.write(
+                    f"- {mismatch}"
+                )
 
 
 # =============================================================================
@@ -668,10 +1015,14 @@ def _contract_consistency(
 
 def _render_model_summary(
     metadata: dict[str, Any],
+    policy: dict[str, Any],
 ) -> None:
     """
-    Render primary out-of-time performance metrics.
+    Render frozen out-of-time model performance.
     """
+
+    st.write("")
+    st.write("")
 
     section_header(
         "Model Performance",
@@ -682,10 +1033,8 @@ def _render_model_summary(
         eyebrow="OUT-OF-TIME EVALUATION",
     )
 
-    metrics = (
-        _final_metrics(
-            metadata
-        )
+    metrics = _final_metrics(
+        metadata
     )
 
     if not metrics:
@@ -694,12 +1043,24 @@ def _render_model_summary(
             "Evaluation Metrics Unavailable",
             (
                 "The final_test_metrics section is not "
-                "available in the local model metadata."
+                "available in the frozen model metadata."
             ),
             tone="warning",
         )
 
         return
+
+    review_fraction = _safe_float(
+        policy.get(
+            "fraction"
+        )
+    )
+
+    policy_label = (
+        f"{review_fraction:.0%}"
+        if review_fraction is not None
+        else "operational"
+    )
 
     c1, c2, c3, c4 = (
         st.columns(4)
@@ -715,7 +1076,7 @@ def _render_model_summary(
                 ),
                 4,
             ),
-            "Primary ranking metric",
+            "Primary imbalanced ranking metric",
             tone="info",
         )
 
@@ -729,7 +1090,7 @@ def _render_model_summary(
                 ),
                 4,
             ),
-            "Global discrimination",
+            "Global ranking discrimination",
             tone="info",
         )
 
@@ -803,7 +1164,7 @@ def _render_model_summary(
                 ),
                 4,
             ),
-            "Lower is better",
+            "Probability error • lower is better",
         )
 
     with c4:
@@ -816,36 +1177,37 @@ def _render_model_summary(
                 ),
                 4,
             ),
-            "Probability quality",
+            "Probability quality • lower is better",
         )
 
     st.write("")
 
     info_panel(
-        "Operational Reading",
+        "Operational Interpretation",
         (
-            "For this use case, ranking quality under constrained "
-            "review capacity is more operationally important than "
-            "a single classification threshold. Recall, precision, "
-            "lift and amount capture should therefore be interpreted "
-            "together."
+            "This model is deployed as a ranking system rather than "
+            "a binary fraud adjudicator. Under constrained investigation "
+            f"capacity ({policy_label} by default), recall, precision, "
+            "lift and fraud-amount capture are therefore the primary "
+            "operational measures. ROC-AUC and Average Precision describe "
+            "broader ranking quality, while Brier score and log loss "
+            "describe probability quality."
         ),
         tone="info",
     )
 
 
 # =============================================================================
-# Model contract
+# Model architecture / contract
 # =============================================================================
 
 
 def _render_model_contract(
     metadata: dict[str, Any],
     runtime_model: dict[str, Any],
-    runtime_error: str | None,
 ) -> None:
     """
-    Render frozen artifact information and live inference contract.
+    Render model identity, feature-space contract and review policy.
     """
 
     st.write("")
@@ -854,13 +1216,12 @@ def _render_model_contract(
     section_header(
         "Frozen Model Contract",
         (
-            "Identity, deployment contract and operational "
-            "review policy of the current model."
+            "Deployment identity, inference feature space, "
+            "explainability contract and operational review policy."
         ),
         eyebrow="MODEL GOVERNANCE",
     )
 
-    # API contract takes precedence for deployment identity.
     model_name = (
         runtime_model.get(
             "model_name"
@@ -898,7 +1259,15 @@ def _render_model_contract(
         or metadata.get(
             "feature_count"
         )
-        or "—"
+    )
+
+    transformed_count = (
+        runtime_model.get(
+            "transformed_feature_count"
+        )
+        or metadata.get(
+            "transformed_feature_count"
+        )
     )
 
     probability_method = (
@@ -911,30 +1280,34 @@ def _render_model_contract(
         or "—"
     )
 
-    policy = (
-        _review_policy(
-            metadata,
-            runtime_model,
+    policy = _review_policy(
+        metadata,
+        runtime_model,
+    )
+
+    fraction = _safe_float(
+        policy.get(
+            "fraction"
         )
     )
 
-    fraction = (
-        _safe_float(
-            policy.get(
-                "fraction"
-            )
+    explainability = (
+        _runtime_explainability(
+            runtime_model
         )
     )
 
-    left, right = (
-        st.columns(
-            [
-                1.2,
-                1,
-            ],
-            gap="large",
-        )
+    left, right = st.columns(
+        [
+            1.25,
+            1,
+        ],
+        gap="large",
     )
+
+    # -------------------------------------------------------------------------
+    # Model
+    # -------------------------------------------------------------------------
 
     with left:
 
@@ -943,12 +1316,10 @@ def _render_model_contract(
         ):
 
             st.markdown(
-                "#### Deployed Model"
+                "### Deployed Model"
             )
 
-            m1, m2 = (
-                st.columns(2)
-            )
+            m1, m2 = st.columns(2)
 
             with m1:
 
@@ -973,55 +1344,718 @@ def _render_model_contract(
 
             st.write("")
 
-            details_left, details_right = (
-                st.columns(2)
+            m1, m2, m3 = st.columns(3)
+
+            with m1:
+
+                mini_metric(
+                    "Source Features",
+                    (
+                        str(feature_count)
+                        if feature_count is not None
+                        else "—"
+                    ),
+                    helper="API input space",
+                )
+
+            with m2:
+
+                mini_metric(
+                    "Transformed Features",
+                    (
+                        str(transformed_count)
+                        if transformed_count is not None
+                        else "—"
+                    ),
+                    helper="Model input space",
+                    tone="info",
+                )
+
+            with m3:
+
+                mini_metric(
+                    "Target",
+                    str(target),
+                    helper="Prediction target",
+                )
+
+            st.write("")
+            st.divider()
+
+            key_value_row(
+                "Probability method",
+                str(
+                    probability_method
+                ),
+                monospace=True,
             )
 
-            with details_left:
+            key_value_row(
+                "Training period end",
+                str(
+                    metadata.get(
+                        "training_period_end",
+                        "—",
+                    )
+                ),
+            )
 
-                st.caption(
-                    "TARGET"
+            test_period = _nonempty_dict(
+                metadata.get(
+                    "test_period"
                 )
+            )
 
-                st.code(
-                    str(
-                        target
+            key_value_row(
+                "Out-of-time test start",
+                str(
+                    test_period.get(
+                        "start",
+                        "—",
+                    )
+                ),
+            )
+
+            key_value_row(
+                "Out-of-time test end",
+                str(
+                    test_period.get(
+                        "end",
+                        "—",
+                    )
+                ),
+            )
+
+    # -------------------------------------------------------------------------
+    # Policy / explainability
+    # -------------------------------------------------------------------------
+
+    with right:
+
+        with st.container(
+            border=True
+        ):
+
+            st.markdown(
+                "### Operational Contract"
+            )
+
+            metric_card(
+                "Investigation Capacity",
+                (
+                    f"{fraction:.0%}"
+                    if fraction is not None
+                    else "—"
+                ),
+                "Default review policy",
+                tone="info",
+            )
+
+            st.write("")
+
+            key_value_row(
+                "Review policy",
+                str(
+                    policy.get(
+                        "type",
+                        "—",
+                    )
+                ),
+                monospace=True,
+            )
+
+            key_value_row(
+                "Explainability",
+                (
+                    "Available"
+                    if explainability.get(
+                        "available"
+                    )
+                    is True
+                    else "Unavailable"
+                ),
+            )
+
+            key_value_row(
+                "Method",
+                str(
+                    explainability.get(
+                        "method",
+                        "—",
+                    )
+                ),
+                monospace=True,
+            )
+
+            key_value_row(
+                "Explanation space",
+                str(
+                    explainability.get(
+                        "output_space",
+                        "—",
+                    )
+                ),
+                monospace=True,
+            )
+
+            key_value_row(
+                "SHAP feature count",
+                str(
+                    explainability.get(
+                        "transformed_feature_count",
+                        "—",
+                    )
+                ),
+            )
+
+            st.write("")
+
+            st.caption(
+                (
+                    "Review capacity determines which claims enter "
+                    "the investigation queue. It is not an individual "
+                    "fraud classification threshold."
+                )
+            )
+
+
+# =============================================================================
+# Inference pipeline
+# =============================================================================
+
+
+def _render_inference_pipeline(
+    runtime_model: dict[str, Any],
+    metadata: dict[str, Any],
+) -> None:
+    """
+    Explain the production inference and explanation spaces.
+    """
+
+    st.write("")
+    st.write("")
+
+    section_header(
+        "Inference Architecture",
+        (
+            "Relationship between business inputs, preprocessing, "
+            "XGBoost scoring and TreeSHAP explanations."
+        ),
+        eyebrow="ML PIPELINE",
+    )
+
+    source_features = (
+        runtime_model.get(
+            "feature_count"
+        )
+        or metadata.get(
+            "feature_count"
+        )
+        or "—"
+    )
+
+    transformed_features = (
+        runtime_model.get(
+            "transformed_feature_count"
+        )
+        or metadata.get(
+            "transformed_feature_count"
+        )
+        or "—"
+    )
+
+    explainability = (
+        _runtime_explainability(
+            runtime_model
+        )
+    )
+
+    c1, c2, c3, c4 = (
+        st.columns(4)
+    )
+
+    with c1:
+
+        metric_card(
+            "Business Input",
+            str(
+                source_features
+            ),
+            "Source claim features",
+        )
+
+    with c2:
+
+        metric_card(
+            "Preprocessing",
+            str(
+                transformed_features
+            ),
+            "Transformed model features",
+            tone="info",
+        )
+
+    with c3:
+
+        metric_card(
+            "Risk Model",
+            str(
+                runtime_model.get(
+                    "model_name"
+                )
+                or metadata.get(
+                    "model_name"
+                )
+                or "XGBoost"
+            ),
+            "Fraud-risk ranking",
+            tone="info",
+        )
+
+    with c4:
+
+        metric_card(
+            "Explanation",
+            str(
+                explainability.get(
+                    "method"
+                )
+                or "TreeSHAP"
+            ),
+            (
+                str(
+                    explainability.get(
+                        "output_space"
+                    )
+                    or "Model output space"
+                )
+            ),
+            tone=(
+                "success"
+                if explainability.get(
+                    "available"
+                )
+                is True
+                else "warning"
+            ),
+        )
+
+    st.write("")
+
+    info_panel(
+        "Feature-Space Interpretation",
+        (
+            f"A claim enters the API using {source_features} source "
+            f"features. The frozen preprocessor maps those variables "
+            f"into {transformed_features} model features consumed by "
+            "XGBoost. TreeSHAP operates in that transformed feature "
+            "space. Business-level global importance artifacts can "
+            "subsequently aggregate transformed contributions back "
+            "into interpretable business concepts."
+        ),
+        tone="info",
+    )
+
+
+# =============================================================================
+# SHAP validation
+# =============================================================================
+
+
+def _prepare_shap_importance(
+    frame: pd.DataFrame,
+) -> tuple[
+    pd.DataFrame,
+    str | None,
+]:
+    """
+    Validate and normalize global SHAP importance.
+    """
+
+    required = {
+        "business_feature",
+        "mean_abs_shap",
+    }
+
+    if frame.empty:
+        return (
+            pd.DataFrame(),
+            "Global SHAP artifact is empty.",
+        )
+
+    missing = (
+        required
+        - set(frame.columns)
+    )
+
+    if missing:
+        return (
+            pd.DataFrame(),
+            (
+                "Global SHAP artifact is missing: "
+                + ", ".join(
+                    sorted(missing)
+                )
+            ),
+        )
+
+    data = frame.copy()
+
+    data["business_feature"] = (
+        data["business_feature"]
+        .astype(str)
+        .str.strip()
+    )
+
+    data["mean_abs_shap"] = (
+        pd.to_numeric(
+            data["mean_abs_shap"],
+            errors="coerce",
+        )
+    )
+
+    if "signed_mean_shap" in data.columns:
+
+        data[
+            "signed_mean_shap"
+        ] = pd.to_numeric(
+            data["signed_mean_shap"],
+            errors="coerce",
+        )
+
+    data = data.dropna(
+        subset=[
+            "mean_abs_shap"
+        ]
+    )
+
+    if data.empty:
+
+        return (
+            pd.DataFrame(),
+            (
+                "Global SHAP artifact contains "
+                "no valid importance values."
+            ),
+        )
+
+    values = data[
+        "mean_abs_shap"
+    ].to_numpy(
+        dtype=float
+    )
+
+    if not np.isfinite(
+        values
+    ).all():
+
+        return (
+            pd.DataFrame(),
+            (
+                "Global SHAP artifact contains "
+                "non-finite importance values."
+            ),
+        )
+
+    if (
+        values < 0
+    ).any():
+
+        return (
+            pd.DataFrame(),
+            (
+                "mean_abs_shap contains negative values, "
+                "which violates the expected artifact contract."
+            ),
+        )
+
+    data = data.loc[
+        data["business_feature"]
+        .ne("")
+    ]
+
+    data[
+        "display_feature"
+    ] = (
+        data["business_feature"]
+        .apply(
+            _pretty_name
+        )
+    )
+
+    return (
+        data
+        .sort_values(
+            "mean_abs_shap",
+            ascending=False,
+        )
+        .reset_index(
+            drop=True
+        ),
+        None,
+    )
+
+
+# =============================================================================
+# Global explainability
+# =============================================================================
+
+
+def _render_global_explainability(
+    runtime_model: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Render global business-level SHAP diagnostics.
+    """
+
+    st.write("")
+    st.write("")
+
+    section_header(
+        "Global Explainability",
+        (
+            "Business features with the strongest average "
+            "influence on model output across the analyzed population."
+        ),
+        eyebrow="GLOBAL SHAP",
+    )
+
+    runtime_explainability = (
+        _runtime_explainability(
+            runtime_model
+        )
+    )
+
+    importance = _load_csv(
+        BUSINESS_IMPORTANCE_FILE
+    )
+
+    importance, error = (
+        _prepare_shap_importance(
+            importance
+        )
+    )
+
+    if error:
+
+        info_panel(
+            "Global SHAP Unavailable",
+            error,
+            tone="warning",
+        )
+
+        return {}
+
+    top = (
+        importance
+        .head(
+            TOP_SHAP_FEATURES
+        )
+        .copy()
+    )
+
+    top_feature = (
+        top.iloc[0]
+        if not top.empty
+        else None
+    )
+
+    c1, c2, c3 = (
+        st.columns(3)
+    )
+
+    with c1:
+
+        metric_card(
+            "Business Features",
+            f"{len(importance):,}",
+            "Global SHAP aggregation",
+        )
+
+    with c2:
+
+        metric_card(
+            "Top Driver",
+            (
+                str(
+                    top_feature[
+                        "display_feature"
+                    ]
+                )
+                if top_feature is not None
+                else "—"
+            ),
+            (
+                (
+                    f"Mean |SHAP| "
+                    f"{top_feature['mean_abs_shap']:.4f}"
+                )
+                if top_feature is not None
+                else "Unavailable"
+            ),
+            tone="info",
+        )
+
+    with c3:
+
+        metric_card(
+            "SHAP Method",
+            str(
+                runtime_explainability.get(
+                    "method"
+                )
+                or "TreeSHAP"
+            ),
+            str(
+                runtime_explainability.get(
+                    "output_space"
+                )
+                or "Global artifact"
+            ),
+            tone="success",
+        )
+
+    st.write("")
+
+    tooltip = [
+        alt.Tooltip(
+            "display_feature:N",
+            title="Feature",
+        ),
+        alt.Tooltip(
+            "mean_abs_shap:Q",
+            title="Mean |SHAP|",
+            format=".5f",
+        ),
+    ]
+
+    if (
+        "signed_mean_shap"
+        in top.columns
+    ):
+
+        tooltip.append(
+            alt.Tooltip(
+                "signed_mean_shap:Q",
+                title="Signed Mean SHAP",
+                format=".5f",
+            )
+        )
+
+    chart = (
+        alt.Chart(
+            top
+        )
+        .mark_bar(
+            cornerRadiusEnd=5,
+        )
+        .encode(
+            x=alt.X(
+                "mean_abs_shap:Q",
+                title=(
+                    "Mean absolute SHAP contribution"
+                ),
+            ),
+            y=alt.Y(
+                "display_feature:N",
+                sort="-x",
+                title=None,
+            ),
+            tooltip=tooltip,
+        )
+        .properties(
+            height=500
+        )
+    )
+
+    st.altair_chart(
+        chart,
+        use_container_width=True,
+    )
+
+    table_columns = [
+        column
+        for column in [
+            "display_feature",
+            "mean_abs_shap",
+            "signed_mean_shap",
+        ]
+        if column in top.columns
+    ]
+
+    with st.expander(
+        "Global SHAP ranking",
+        expanded=False,
+    ):
+
+        st.dataframe(
+            top[
+                table_columns
+            ],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "display_feature":
+                    st.column_config.TextColumn(
+                        "Business Feature",
+                        width="large",
                     ),
-                    language=None,
-                )
 
-                st.caption(
-                    "FEATURE COUNT"
-                )
+                "mean_abs_shap":
+                    st.column_config.NumberColumn(
+                        "Mean |SHAP|",
+                        format="%.5f",
+                    ),
 
-                st.write(
+                "signed_mean_shap":
+                    st.column_config.NumberColumn(
+                        "Signed Mean SHAP",
+                        format="%.5f",
+                    ),
+            },
+        )
+
+    st.write("")
+
+    left, right = (
+        st.columns(2)
+    )
+
+    global_figure = _existing_image(
+        FIGURES_DIR,
+        "01_shap_global_bar.png",
+    )
+
+    beeswarm = _existing_image(
+        FIGURES_DIR,
+        "02_shap_beeswarm.png",
+    )
+
+    with left:
+
+        with st.container(
+            border=True
+        ):
+
+            st.markdown(
+                "#### Global Importance"
+            )
+
+            if global_figure:
+
+                st.image(
                     str(
-                        feature_count
-                    )
+                        global_figure
+                    ),
+                    use_container_width=True,
                 )
 
-            with details_right:
+            else:
 
-                st.caption(
-                    "PROBABILITY METHOD"
-                )
-
-                st.write(
-                    str(
-                        probability_method
-                    )
-                )
-
-                st.caption(
-                    "TRAINING PERIOD END"
-                )
-
-                st.write(
-                    str(
-                        metadata.get(
-                            "training_period_end",
-                            "—",
-                        )
+                st.info(
+                    (
+                        "Global SHAP figure is not "
+                        "available in current artifacts."
                     )
                 )
 
@@ -1032,438 +2066,68 @@ def _render_model_contract(
         ):
 
             st.markdown(
-                "#### Review Policy"
+                "#### SHAP Distribution"
             )
 
-            metric_card(
-                "Investigation Capacity",
-                (
-                    f"{fraction:.0%}"
-                    if fraction
-                    is not None
-                    else "—"
-                ),
-                "Default operational policy",
-                tone="info",
-            )
+            if beeswarm:
 
-            st.write("")
-
-            st.write(
-                (
-                    "**Policy type:** "
-                    f"{policy.get('type', '—')}"
-                )
-            )
-
-            test_period = (
-                metadata.get(
-                    "test_period",
-                    {},
-                )
-            )
-
-            if not isinstance(
-                test_period,
-                dict,
-            ):
-                test_period = {}
-
-            st.write(
-                (
-                    "**Test start:** "
-                    f"{test_period.get('start', '—')}"
-                )
-            )
-
-            st.write(
-                (
-                    "**Test end:** "
-                    f"{test_period.get('end', '—')}"
-                )
-            )
-
-            st.caption(
-                (
-                    "The review fraction controls portfolio "
-                    "selection. It is not an individual fraud "
-                    "classification threshold."
-                )
-            )
-
-    st.write("")
-
-    consistent, mismatches = (
-        _contract_consistency(
-            metadata,
-            runtime_model,
-        )
-    )
-
-    if consistent is True:
-
-        info_panel(
-            "Contract Consistency",
-            (
-                "The local frozen-model metadata is consistent "
-                "with the model contract currently exposed by "
-                "the inference API."
-            ),
-            tone="success",
-        )
-
-    elif consistent is False:
-
-        st.warning(
-            (
-                "Local model metadata differs from "
-                "the model currently exposed by the API."
-            )
-        )
-
-        with st.expander(
-            "Contract differences",
-            expanded=False,
-        ):
-
-            for mismatch in mismatches:
-
-                st.write(
-                    f"- {mismatch}"
-                )
-
-    elif runtime_error:
-
-        info_panel(
-            "Runtime Contract Unavailable",
-            (
-                "Local evaluation metadata remains available, "
-                "but the live inference contract could not be "
-                "verified against the API."
-            ),
-            tone="warning",
-        )
-
-
-# =============================================================================
-# Global SHAP
-# =============================================================================
-
-
-def _render_global_explainability() -> None:
-    """
-    Render business-level global SHAP diagnostics.
-    """
-
-    st.write("")
-    st.write("")
-
-    section_header(
-        "Global Explainability",
-        (
-            "Business features with the strongest average "
-            "influence on model output."
-        ),
-        eyebrow="SHAP",
-    )
-
-    importance = (
-        _load_csv(
-            BUSINESS_IMPORTANCE_FILE
-        )
-    )
-
-    required_columns = {
-        "business_feature",
-        "mean_abs_shap",
-    }
-
-    if (
-        importance.empty
-        or not required_columns.issubset(
-            importance.columns
-        )
-    ):
-
-        info_panel(
-            "Global SHAP Unavailable",
-            (
-                "The business-level SHAP importance artifact "
-                "is missing or does not contain the expected fields."
-            ),
-            tone="warning",
-        )
-
-    else:
-
-        importance = (
-            importance.copy()
-        )
-
-        importance[
-            "mean_abs_shap"
-        ] = pd.to_numeric(
-            importance[
-                "mean_abs_shap"
-            ],
-            errors="coerce",
-        )
-
-        importance = (
-            importance
-            .dropna(
-                subset=[
-                    "mean_abs_shap"
-                ]
-            )
-        )
-
-        top = (
-            importance
-            .sort_values(
-                "mean_abs_shap",
-                ascending=False,
-            )
-            .head(
-                TOP_SHAP_FEATURES
-            )
-            .copy()
-        )
-
-        top[
-            "display_feature"
-        ] = (
-            top[
-                "business_feature"
-            ]
-            .apply(
-                _pretty_name
-            )
-        )
-
-        chart = (
-            alt.Chart(
-                top
-            )
-            .mark_bar(
-                cornerRadiusEnd=5,
-            )
-            .encode(
-                x=alt.X(
-                    "mean_abs_shap:Q",
-                    title=(
-                        "Mean absolute SHAP contribution"
+                st.image(
+                    str(
+                        beeswarm
                     ),
-                ),
-
-                y=alt.Y(
-                    "display_feature:N",
-                    sort="-x",
-                    title=None,
-                ),
-
-                tooltip=[
-                    alt.Tooltip(
-                        "display_feature:N",
-                        title="Feature",
-                    ),
-
-                    alt.Tooltip(
-                        "mean_abs_shap:Q",
-                        title="Mean |SHAP|",
-                        format=".4f",
-                    ),
-                ],
-            )
-            .properties(
-                height=500
-            )
-        )
-
-        if (
-            "signed_mean_shap"
-            in top.columns
-        ):
-
-            chart = (
-                alt.Chart(
-                    top
+                    use_container_width=True,
                 )
-                .mark_bar(
-                    cornerRadiusEnd=5,
+
+            else:
+
+                st.info(
+                    (
+                        "SHAP beeswarm figure is not "
+                        "available in current artifacts."
+                    )
                 )
-                .encode(
-                    x=alt.X(
-                        "mean_abs_shap:Q",
-                        title=(
-                            "Mean absolute SHAP contribution"
-                        ),
-                    ),
-
-                    y=alt.Y(
-                        "display_feature:N",
-                        sort="-x",
-                        title=None,
-                    ),
-
-                    tooltip=[
-                        alt.Tooltip(
-                            "display_feature:N",
-                            title="Feature",
-                        ),
-
-                        alt.Tooltip(
-                            "mean_abs_shap:Q",
-                            title="Mean |SHAP|",
-                            format=".4f",
-                        ),
-
-                        alt.Tooltip(
-                            "signed_mean_shap:Q",
-                            title="Signed mean SHAP",
-                            format=".4f",
-                        ),
-                    ],
-                )
-                .properties(
-                    height=500
-                )
-            )
-
-        st.altair_chart(
-            chart,
-            use_container_width=True,
-        )
-
-        st.write("")
-
-        table_columns = [
-            column
-
-            for column
-            in [
-                "display_feature",
-                "mean_abs_shap",
-                "signed_mean_shap",
-            ]
-
-            if column
-            in top.columns
-        ]
-
-        with st.expander(
-            "Top SHAP features",
-            expanded=False,
-        ):
-
-            st.dataframe(
-                top[
-                    table_columns
-                ],
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "display_feature":
-                        st.column_config.TextColumn(
-                            "Feature",
-                            width="large",
-                        ),
-
-                    "mean_abs_shap":
-                        st.column_config.NumberColumn(
-                            "Mean |SHAP|",
-                            format="%.5f",
-                        ),
-
-                    "signed_mean_shap":
-                        st.column_config.NumberColumn(
-                            "Signed Mean SHAP",
-                            format="%.5f",
-                        ),
-                },
-            )
-
-    st.write("")
-
-    left, right = (
-        st.columns(2)
-    )
-
-    shap_global = (
-        _existing_image(
-            FIGURES_DIR,
-            "01_shap_global_bar.png",
-        )
-    )
-
-    shap_beeswarm = (
-        _existing_image(
-            FIGURES_DIR,
-            "02_shap_beeswarm.png",
-        )
-    )
-
-    with left:
-
-        st.markdown(
-            "#### SHAP Global Importance"
-        )
-
-        if shap_global is not None:
-
-            st.image(
-                str(
-                    shap_global
-                ),
-                use_container_width=True,
-            )
-
-        else:
-
-            empty_state_message = (
-                "Global SHAP figure is not available "
-                "in the current explainability artifacts."
-            )
-
-            st.info(
-                empty_state_message
-            )
-
-    with right:
-
-        st.markdown(
-            "#### SHAP Distribution"
-        )
-
-        if shap_beeswarm is not None:
-
-            st.image(
-                str(
-                    shap_beeswarm
-                ),
-                use_container_width=True,
-            )
-
-        else:
-
-            st.info(
-                (
-                    "SHAP beeswarm figure is not "
-                    "available in the current artifacts."
-                )
-            )
 
     st.write("")
 
     info_panel(
-        "Interpretation",
+        "How to Read SHAP",
         (
-            "Mean absolute SHAP quantifies influence magnitude, "
-            "not causal importance. A globally important feature "
-            "can increase risk for some claims and decrease it for others."
+            "Mean absolute SHAP measures average influence magnitude, "
+            "not causal importance. Signed mean SHAP summarizes average "
+            "direction in the model-output space, but opposite effects "
+            "across observations may cancel. Claim-level explanations "
+            "should therefore be inspected separately through the "
+            "Claim Analysis workflow."
         ),
         tone="info",
     )
+
+    return {
+        "feature_count":
+            len(importance),
+
+        "top_feature":
+            (
+                str(
+                    top_feature[
+                        "display_feature"
+                    ]
+                )
+                if top_feature is not None
+                else None
+            ),
+
+        "top_mean_abs_shap":
+            (
+                _safe_float(
+                    top_feature[
+                        "mean_abs_shap"
+                    ]
+                )
+                if top_feature is not None
+                else None
+            ),
+    }
 
 
 # =============================================================================
@@ -1473,9 +2137,7 @@ def _render_global_explainability() -> None:
 
 def _render_mechanism_analysis() -> dict[str, Any]:
     """
-    Analyze performance across synthetic fraud mechanisms.
-
-    Returns a compact summary used by the final interpretation section.
+    Analyze model behavior across synthetic fraud mechanisms.
     """
 
     st.write("")
@@ -1484,22 +2146,18 @@ def _render_mechanism_analysis() -> dict[str, Any]:
     section_header(
         "Fraud Mechanism Analysis",
         (
-            "How risk scores vary across different "
-            "synthetic fraud-generation mechanisms."
+            "Risk-score behavior across the synthetic "
+            "fraud mechanisms represented in evaluation data."
         ),
         eyebrow="SEGMENT PERFORMANCE",
     )
 
-    mechanism = (
-        _load_csv(
-            MECHANISM_SCORE_FILE
-        )
+    mechanism = _load_csv(
+        MECHANISM_SCORE_FILE
     )
 
-    missed = (
-        _load_csv(
-            FALSE_NEGATIVE_FILE
-        )
+    missed = _load_csv(
+        FALSE_NEGATIVE_FILE
     )
 
     required = {
@@ -1525,33 +2183,52 @@ def _render_mechanism_analysis() -> dict[str, Any]:
 
         return {}
 
-    data = (
-        mechanism.copy()
-    )
+    data = mechanism.copy()
 
-    for column in [
+    numeric_columns = [
         "mean_score",
         "median_score",
         "fraud_claims",
-    ]:
+    ]
+
+    for column in numeric_columns:
 
         if column in data.columns:
 
-            data[
-                column
-            ] = pd.to_numeric(
-                data[
-                    column
-                ],
-                errors="coerce",
+            data[column] = (
+                pd.to_numeric(
+                    data[column],
+                    errors="coerce",
+                )
             )
 
-    data[
-        "Mechanism"
-    ] = (
-        data[
-            "fraud_mechanism"
+    data = data.dropna(
+        subset=[
+            "mean_score"
         ]
+    )
+
+    data = data.loc[
+        np.isfinite(
+            data["mean_score"]
+        )
+    ]
+
+    if data.empty:
+
+        info_panel(
+            "Mechanism Analysis Unavailable",
+            (
+                "No valid mechanism-level risk "
+                "statistics are available."
+            ),
+            tone="warning",
+        )
+
+        return {}
+
+    data["Mechanism"] = (
+        data["fraud_mechanism"]
         .apply(
             _pretty_name
         )
@@ -1567,47 +2244,79 @@ def _render_mechanism_analysis() -> dict[str, Any]:
         )
     ):
 
-        missed = (
-            missed.copy()
-        )
+        missed = missed.copy()
 
         missed[
-            "Mechanism"
-        ] = (
+            "missed_fraud_claims"
+        ] = pd.to_numeric(
             missed[
-                "fraud_mechanism"
-            ]
+                "missed_fraud_claims"
+            ],
+            errors="coerce",
+        )
+
+        missed["Mechanism"] = (
+            missed["fraud_mechanism"]
             .apply(
                 _pretty_name
             )
         )
 
-        data = (
-            data.merge(
-                missed[
-                    [
-                        "Mechanism",
-                        "missed_fraud_claims",
-                    ]
-                ],
-                on="Mechanism",
-                how="left",
-            )
+        data = data.merge(
+            missed[
+                [
+                    "Mechanism",
+                    "missed_fraud_claims",
+                ]
+            ],
+            on="Mechanism",
+            how="left",
+            validate="one_to_one",
         )
 
-    left, right = (
-        st.columns(
-            [
-                1.3,
-                1,
-            ],
-            gap="large",
-        )
+    left, right = st.columns(
+        [
+            1.3,
+            1,
+        ],
+        gap="large",
     )
 
     with left:
 
-        score_chart = (
+        tooltip = [
+            alt.Tooltip(
+                "Mechanism:N",
+                title="Mechanism",
+            ),
+            alt.Tooltip(
+                "mean_score:Q",
+                title="Mean risk",
+                format=".2%",
+            ),
+        ]
+
+        if "fraud_claims" in data.columns:
+
+            tooltip.append(
+                alt.Tooltip(
+                    "fraud_claims:Q",
+                    title="Fraud claims",
+                    format=",",
+                )
+            )
+
+        if "median_score" in data.columns:
+
+            tooltip.append(
+                alt.Tooltip(
+                    "median_score:Q",
+                    title="Median risk",
+                    format=".2%",
+                )
+            )
+
+        chart = (
             alt.Chart(
                 data
             )
@@ -1622,36 +2331,12 @@ def _render_mechanism_analysis() -> dict[str, Any]:
                         format=".0%",
                     ),
                 ),
-
                 y=alt.Y(
                     "Mechanism:N",
                     sort="-x",
                     title=None,
                 ),
-
-                tooltip=[
-                    alt.Tooltip(
-                        "Mechanism:N",
-                        title="Mechanism",
-                    ),
-
-                    alt.Tooltip(
-                        "fraud_claims:Q",
-                        title="Fraud claims",
-                    ),
-
-                    alt.Tooltip(
-                        "mean_score:Q",
-                        title="Mean score",
-                        format=".2%",
-                    ),
-
-                    alt.Tooltip(
-                        "median_score:Q",
-                        title="Median score",
-                        format=".2%",
-                    ),
-                ],
+                tooltip=tooltip,
             )
             .properties(
                 height=360
@@ -1659,7 +2344,7 @@ def _render_mechanism_analysis() -> dict[str, Any]:
         )
 
         st.altair_chart(
-            score_chart,
+            chart,
             use_container_width=True,
         )
 
@@ -1667,18 +2352,14 @@ def _render_mechanism_analysis() -> dict[str, Any]:
 
         visible_columns = [
             column
-
-            for column
-            in [
+            for column in [
                 "Mechanism",
                 "fraud_claims",
                 "mean_score",
                 "median_score",
                 "missed_fraud_claims",
             ]
-
-            if column
-            in data.columns
+            if column in data.columns
         ]
 
         st.dataframe(
@@ -1706,7 +2387,7 @@ def _render_mechanism_analysis() -> dict[str, Any]:
                         "Mean Risk",
                         min_value=0,
                         max_value=1,
-                        format="%.2f",
+                        format="%.3f",
                     ),
 
                 "median_score":
@@ -1723,44 +2404,17 @@ def _render_mechanism_analysis() -> dict[str, Any]:
             },
         )
 
-    valid_scores = (
-        data.dropna(
-            subset=[
-                "mean_score"
-            ]
-        )
+    ordered = data.sort_values(
+        "mean_score",
+        ascending=False,
     )
 
-    if valid_scores.empty:
-        return {}
-
-    weakest = (
-        valid_scores
-        .sort_values(
-            "mean_score",
-            ascending=True,
-        )
-        .iloc[
-            0
-        ]
-    )
-
-    strongest = (
-        valid_scores
-        .sort_values(
-            "mean_score",
-            ascending=False,
-        )
-        .iloc[
-            0
-        ]
-    )
+    strongest = ordered.iloc[0]
+    weakest = ordered.iloc[-1]
 
     st.write("")
 
-    c1, c2 = (
-        st.columns(2)
-    )
+    c1, c2 = st.columns(2)
 
     with c1:
 
@@ -1794,34 +2448,7 @@ def _render_mechanism_analysis() -> dict[str, Any]:
             tone="warning",
         )
 
-    st.write("")
-
-    info_panel(
-        "Observed Weakness",
-        (
-            f"{weakest['Mechanism']} currently has the "
-            "lowest mean model risk among the analyzed "
-            "synthetic fraud mechanisms "
-            f"({_format_percent(weakest['mean_score'], 1)})."
-        ),
-        tone="warning",
-    )
-
     return {
-        "weakest_mechanism":
-            str(
-                weakest[
-                    "Mechanism"
-                ]
-            ),
-
-        "weakest_mechanism_score":
-            _safe_float(
-                weakest[
-                    "mean_score"
-                ]
-            ),
-
         "strongest_mechanism":
             str(
                 strongest[
@@ -1835,6 +2462,20 @@ def _render_mechanism_analysis() -> dict[str, Any]:
                     "mean_score"
                 ]
             ),
+
+        "weakest_mechanism":
+            str(
+                weakest[
+                    "Mechanism"
+                ]
+            ),
+
+        "weakest_mechanism_score":
+            _safe_float(
+                weakest[
+                    "mean_score"
+                ]
+            ),
     }
 
 
@@ -1845,7 +2486,7 @@ def _render_mechanism_analysis() -> dict[str, Any]:
 
 def _render_difficulty_analysis() -> dict[str, Any]:
     """
-    Analyze scores across synthetic fraud difficulty levels.
+    Analyze score behavior across synthetic fraud difficulty.
     """
 
     st.write("")
@@ -1860,10 +2501,8 @@ def _render_difficulty_analysis() -> dict[str, Any]:
         eyebrow="ROBUSTNESS",
     )
 
-    difficulty = (
-        _load_csv(
-            DIFFICULTY_SCORE_FILE
-        )
+    difficulty = _load_csv(
+        DIFFICULTY_SCORE_FILE
     )
 
     required = {
@@ -1889,9 +2528,7 @@ def _render_difficulty_analysis() -> dict[str, Any]:
 
         return {}
 
-    difficulty = (
-        difficulty.copy()
-    )
+    difficulty = difficulty.copy()
 
     for column in [
         "mean_score",
@@ -1901,25 +2538,84 @@ def _render_difficulty_analysis() -> dict[str, Any]:
 
         if column in difficulty.columns:
 
-            difficulty[
-                column
-            ] = pd.to_numeric(
-                difficulty[
-                    column
-                ],
-                errors="coerce",
+            difficulty[column] = (
+                pd.to_numeric(
+                    difficulty[column],
+                    errors="coerce",
+                )
             )
 
-    difficulty[
-        "Difficulty"
-    ] = (
-        difficulty[
-            "fraud_difficulty"
+    difficulty = difficulty.dropna(
+        subset=[
+            "mean_score"
         ]
+    )
+
+    difficulty = difficulty.loc[
+        np.isfinite(
+            difficulty[
+                "mean_score"
+            ]
+        )
+    ]
+
+    if difficulty.empty:
+
+        info_panel(
+            "Difficulty Analysis Unavailable",
+            (
+                "No valid difficulty-level "
+                "risk statistics are available."
+            ),
+            tone="warning",
+        )
+
+        return {}
+
+    difficulty["Difficulty"] = (
+        difficulty["fraud_difficulty"]
         .apply(
             _pretty_name
         )
     )
+
+    tooltip = [
+        alt.Tooltip(
+            "Difficulty:N",
+            title="Difficulty",
+        ),
+        alt.Tooltip(
+            "mean_score:Q",
+            title="Mean risk",
+            format=".2%",
+        ),
+    ]
+
+    if (
+        "fraud_claims"
+        in difficulty.columns
+    ):
+
+        tooltip.append(
+            alt.Tooltip(
+                "fraud_claims:Q",
+                title="Fraud claims",
+                format=",",
+            )
+        )
+
+    if (
+        "median_score"
+        in difficulty.columns
+    ):
+
+        tooltip.append(
+            alt.Tooltip(
+                "median_score:Q",
+                title="Median risk",
+                format=".2%",
+            )
+        )
 
     chart = (
         alt.Chart(
@@ -1939,7 +2635,6 @@ def _render_difficulty_analysis() -> dict[str, Any]:
                 ],
                 title=None,
             ),
-
             y=alt.Y(
                 "mean_score:Q",
                 title="Mean Fraud Risk",
@@ -1947,30 +2642,7 @@ def _render_difficulty_analysis() -> dict[str, Any]:
                     format=".0%",
                 ),
             ),
-
-            tooltip=[
-                alt.Tooltip(
-                    "Difficulty:N",
-                    title="Difficulty",
-                ),
-
-                alt.Tooltip(
-                    "fraud_claims:Q",
-                    title="Fraud claims",
-                ),
-
-                alt.Tooltip(
-                    "mean_score:Q",
-                    title="Mean risk",
-                    format=".2%",
-                ),
-
-                alt.Tooltip(
-                    "median_score:Q",
-                    title="Median risk",
-                    format=".2%",
-                ),
-            ],
+            tooltip=tooltip,
         )
         .properties(
             height=320
@@ -1982,32 +2654,17 @@ def _render_difficulty_analysis() -> dict[str, Any]:
         use_container_width=True,
     )
 
-    columns = (
-        st.columns(
-            3
-        )
-    )
+    summary: dict[str, Any] = {}
 
-    summary: dict[
-        str,
-        Any,
-    ] = {}
+    columns = st.columns(3)
 
     tone_map = {
-        "easy":
-            "success",
-
-        "medium":
-            "info",
-
-        "hard":
-            "warning",
+        "easy": "success",
+        "medium": "info",
+        "hard": "warning",
     }
 
-    for (
-        column,
-        level,
-    ) in zip(
+    for column, level in zip(
         columns,
         [
             "easy",
@@ -2016,16 +2673,14 @@ def _render_difficulty_analysis() -> dict[str, Any]:
         ],
     ):
 
-        subset = (
-            difficulty.loc[
-                difficulty[
-                    "fraud_difficulty"
-                ]
-                .astype(str)
-                .str.lower()
-                == level
+        subset = difficulty.loc[
+            difficulty[
+                "fraud_difficulty"
             ]
-        )
+            .astype(str)
+            .str.lower()
+            .eq(level)
+        ]
 
         if subset.empty:
 
@@ -2034,36 +2689,26 @@ def _render_difficulty_analysis() -> dict[str, Any]:
                 metric_card(
                     f"{level.title()} Fraud",
                     "—",
-                    "No available observations",
+                    "No observations",
                 )
 
             continue
 
-        row = (
-            subset.iloc[
-                0
-            ]
-        )
+        row = subset.iloc[0]
 
-        mean_score = (
-            _safe_float(
-                row.get(
-                    "mean_score"
-                )
+        mean_score = _safe_float(
+            row.get(
+                "mean_score"
             )
         )
 
-        fraud_claims = (
-            _safe_int(
-                row.get(
-                    "fraud_claims"
-                )
+        fraud_claims = _safe_int(
+            row.get(
+                "fraud_claims"
             )
         )
 
-        summary[
-            level
-        ] = mean_score
+        summary[level] = mean_score
 
         with column:
 
@@ -2075,25 +2720,20 @@ def _render_difficulty_analysis() -> dict[str, Any]:
                 ),
                 (
                     f"{fraud_claims:,} fraud claims"
-                    if fraud_claims
-                    is not None
-                    else "Fraud cases"
+                    if fraud_claims is not None
+                    else "Evaluation segment"
                 ),
                 tone=tone_map[
                     level
                 ],
             )
 
-    easy_score = (
-        summary.get(
-            "easy"
-        )
+    easy_score = summary.get(
+        "easy"
     )
 
-    hard_score = (
-        summary.get(
-            "hard"
-        )
+    hard_score = summary.get(
+        "hard"
     )
 
     if (
@@ -2106,13 +2746,18 @@ def _render_difficulty_analysis() -> dict[str, Any]:
             - hard_score
         )
 
+        summary[
+            "easy_hard_gap"
+        ] = gap
+
         st.write("")
 
         info_panel(
-            "Difficulty Gap",
+            "Difficulty Sensitivity",
             (
-                "Mean risk decreases by "
-                f"{gap:.1%} from easy to hard synthetic fraud."
+                "Mean model risk changes by "
+                f"{gap:+.1%} when comparing easy "
+                "with hard synthetic fraud."
             ),
             tone=(
                 "warning"
@@ -2120,10 +2765,6 @@ def _render_difficulty_analysis() -> dict[str, Any]:
                 else "info"
             ),
         )
-
-        summary[
-            "easy_hard_gap"
-        ] = gap
 
     return summary
 
@@ -2135,7 +2776,7 @@ def _render_difficulty_analysis() -> dict[str, Any]:
 
 def _render_evaluation_diagnostics() -> None:
     """
-    Render frozen out-of-time diagnostic plots.
+    Render frozen out-of-time validation figures.
     """
 
     st.write("")
@@ -2144,30 +2785,21 @@ def _render_evaluation_diagnostics() -> None:
     section_header(
         "Evaluation Diagnostics",
         (
-            "Out-of-time figures used to inspect ranking, "
-            "classification behavior and probability calibration."
+            "Frozen out-of-time figures used to inspect "
+            "ranking, policy performance and probability quality."
         ),
         eyebrow="MODEL VALIDATION",
     )
 
-    tabs = (
-        st.tabs(
-            [
-                title
-
-                for (
-                    _,
-                    title,
-                    _,
-                ) in EVALUATION_FIGURES
-            ]
-        )
+    tabs = st.tabs(
+        [
+            title
+            for _, title, _
+            in EVALUATION_FIGURES
+        ]
     )
 
-    for (
-        tab,
-        specification,
-    ) in zip(
+    for tab, specification in zip(
         tabs,
         EVALUATION_FIGURES,
     ):
@@ -2184,19 +2816,15 @@ def _render_evaluation_diagnostics() -> None:
                 description
             )
 
-            path = (
-                _existing_image(
-                    FINAL_EVALUATION_DIR,
-                    filename,
-                )
+            path = _existing_image(
+                FINAL_EVALUATION_DIR,
+                filename,
             )
 
-            if path is not None:
+            if path:
 
                 st.image(
-                    str(
-                        path
-                    ),
+                    str(path),
                     use_container_width=True,
                 )
 
@@ -2205,8 +2833,8 @@ def _render_evaluation_diagnostics() -> None:
                 info_panel(
                     "Figure Unavailable",
                     (
-                        f"{title} is not present in the "
-                        "current final-evaluation artifacts."
+                        f"{title} is not present in "
+                        "the frozen evaluation artifacts."
                     ),
                     tone="warning",
                 )
@@ -2219,7 +2847,7 @@ def _render_evaluation_diagnostics() -> None:
 
 def _render_error_analysis() -> None:
     """
-    Render case-level qualitative failure analysis.
+    Render representative case-level model failures.
     """
 
     st.write("")
@@ -2229,7 +2857,7 @@ def _render_error_analysis() -> None:
         "Observed Failure Modes",
         (
             "Representative false-positive, false-negative "
-            "and legitimate-anomaly cases."
+            "and legitimate-anomaly cases identified during evaluation."
         ),
         eyebrow="ERROR ANALYSIS",
     )
@@ -2238,27 +2866,28 @@ def _render_error_analysis() -> None:
         tuple[
             Path,
             str,
+            str,
         ]
     ] = []
 
     for (
         filename,
         label,
+        description,
     ) in ERROR_FIGURES:
 
-        path = (
-            _existing_image(
-                FIGURES_DIR,
-                filename,
-            )
+        path = _existing_image(
+            FIGURES_DIR,
+            filename,
         )
 
-        if path is not None:
+        if path:
 
             available.append(
                 (
                     path,
                     label,
+                    description,
                 )
             )
 
@@ -2275,23 +2904,15 @@ def _render_error_analysis() -> None:
 
         return
 
-    columns = (
-        st.columns(
-            2
-        )
-    )
+    columns = st.columns(2)
 
-    for (
-        index,
-        item,
+    for index, (
+        path,
+        label,
+        description,
     ) in enumerate(
         available
     ):
-
-        (
-            path,
-            label,
-        ) = item
 
         with columns[
             index % 2
@@ -2305,22 +2926,105 @@ def _render_error_analysis() -> None:
                     f"#### {label}"
                 )
 
+                st.caption(
+                    description
+                )
+
                 st.image(
-                    str(
-                        path
-                    ),
+                    str(path),
                     use_container_width=True,
                 )
 
 
 # =============================================================================
-# Data / artifact coverage
+# Artifact coverage
 # =============================================================================
+
+
+def _artifact_inventory() -> list[
+    ArtifactCheck
+]:
+    """
+    Build the expected analytical artifact inventory.
+    """
+
+    checks = [
+        ArtifactCheck(
+            label="Model metadata",
+            path=METADATA_PATH,
+            category="Governance",
+        ),
+        ArtifactCheck(
+            label="Business SHAP importance",
+            path=(
+                EXPLAINABILITY_DIR
+                / BUSINESS_IMPORTANCE_FILE
+            ),
+            category="Explainability",
+        ),
+        ArtifactCheck(
+            label="Mechanism analysis",
+            path=(
+                EXPLAINABILITY_DIR
+                / MECHANISM_SCORE_FILE
+            ),
+            category="Robustness",
+        ),
+        ArtifactCheck(
+            label="False-negative analysis",
+            path=(
+                EXPLAINABILITY_DIR
+                / FALSE_NEGATIVE_FILE
+            ),
+            category="Error Analysis",
+        ),
+        ArtifactCheck(
+            label="Difficulty analysis",
+            path=(
+                EXPLAINABILITY_DIR
+                / DIFFICULTY_SCORE_FILE
+            ),
+            category="Robustness",
+        ),
+        ArtifactCheck(
+            label="Global SHAP figure",
+            path=(
+                FIGURES_DIR
+                / "01_shap_global_bar.png"
+            ),
+            category="Explainability",
+        ),
+        ArtifactCheck(
+            label="SHAP beeswarm",
+            path=(
+                FIGURES_DIR
+                / "02_shap_beeswarm.png"
+            ),
+            category="Explainability",
+        ),
+    ]
+
+    for filename, title, _ in (
+        EVALUATION_FIGURES
+    ):
+
+        checks.append(
+            ArtifactCheck(
+                label=title,
+                path=(
+                    FINAL_EVALUATION_DIR
+                    / filename
+                ),
+                category="Evaluation",
+            )
+        )
+
+    return checks
 
 
 def _render_artifact_coverage() -> None:
     """
-    Surface analytical-artifact availability explicitly.
+    Surface analytical evidence availability.
     """
 
     st.write("")
@@ -2329,87 +3033,62 @@ def _render_artifact_coverage() -> None:
     section_header(
         "Analytical Artifact Coverage",
         (
-            "Availability of the evidence supporting "
-            "this model-insights page."
+            "Traceability of the frozen evidence supporting "
+            "performance, explainability and robustness analysis."
         ),
         eyebrow="TRACEABILITY",
     )
 
-    checks = [
-        (
-            "Model metadata",
-            METADATA_PATH.exists(),
-        ),
-        (
-            "Business SHAP importance",
-            (
-                EXPLAINABILITY_DIR
-                / BUSINESS_IMPORTANCE_FILE
-            ).exists(),
-        ),
-        (
-            "Mechanism analysis",
-            (
-                EXPLAINABILITY_DIR
-                / MECHANISM_SCORE_FILE
-            ).exists(),
-        ),
-        (
-            "Difficulty analysis",
-            (
-                EXPLAINABILITY_DIR
-                / DIFFICULTY_SCORE_FILE
-            ).exists(),
-        ),
-        (
-            "Global SHAP figure",
-            (
-                FIGURES_DIR
-                / "01_shap_global_bar.png"
-            ).exists(),
-        ),
-        (
-            "SHAP beeswarm",
-            (
-                FIGURES_DIR
-                / "02_shap_beeswarm.png"
-            ).exists(),
-        ),
+    checks = _artifact_inventory()
+
+    available_count = sum(
+        check.available
+        for check in checks
+    )
+
+    total_count = len(
+        checks
+    )
+
+    coverage_ratio = (
+        available_count
+        / total_count
+        if total_count
+        else 0.0
+    )
+
+    evaluation_checks = [
+        check
+        for check in checks
+        if check.category
+        == "Evaluation"
     ]
 
-    available_count = (
-        sum(
-            int(
-                available
-            )
+    explainability_checks = [
+        check
+        for check in checks
+        if check.category
+        == "Explainability"
+    ]
 
-            for (
-                _,
-                available,
-            ) in checks
-        )
-    )
-
-    total_count = (
-        len(
-            checks
-        )
-    )
-
-    c1, c2, c3 = (
-        st.columns(3)
+    c1, c2, c3, c4 = (
+        st.columns(4)
     )
 
     with c1:
 
         metric_card(
             "Artifacts Available",
-            f"{available_count}/{total_count}",
-            "Core analytical artifacts",
+            (
+                f"{available_count}/"
+                f"{total_count}"
+            ),
+            (
+                f"{coverage_ratio:.0%} coverage"
+            ),
             tone=(
                 "success"
-                if available_count
-                == total_count
+                if coverage_ratio == 1
                 else "warning"
             ),
         )
@@ -2417,69 +3096,70 @@ def _render_artifact_coverage() -> None:
     with c2:
 
         metric_card(
-            "Explainability Directory",
+            "Evaluation",
             (
-                "READY"
-                if EXPLAINABILITY_DIR.exists()
-                else "MISSING"
+                f"{sum(c.available for c in evaluation_checks)}"
+                f"/{len(evaluation_checks)}"
             ),
-            "Frontend analytical assets",
-            tone=(
-                "success"
-                if EXPLAINABILITY_DIR.exists()
-                else "danger"
-            ),
+            "Frozen validation figures",
         )
 
     with c3:
 
         metric_card(
-            "Evaluation Figures",
-            str(
-                sum(
-                    1
-
-                    for (
-                        filename,
-                        _,
-                        _,
-                    ) in EVALUATION_FIGURES
-
-                    if (
-                        FINAL_EVALUATION_DIR
-                        / filename
-                    ).exists()
-                )
-            ),
+            "Explainability",
             (
-                f"of {len(EVALUATION_FIGURES)} expected"
+                f"{sum(c.available for c in explainability_checks)}"
+                f"/{len(explainability_checks)}"
+            ),
+            "Global SHAP artifacts",
+        )
+
+    with c4:
+
+        metric_card(
+            "Metadata",
+            (
+                "READY"
+                if METADATA_PATH.exists()
+                else "MISSING"
+            ),
+            "Frozen model contract",
+            tone=(
+                "success"
+                if METADATA_PATH.exists()
+                else "danger"
             ),
         )
+
+    inventory = pd.DataFrame(
+        [
+            {
+                "Category":
+                    check.category,
+
+                "Artifact":
+                    check.label,
+
+                "Status":
+                    (
+                        "AVAILABLE"
+                        if check.available
+                        else "MISSING"
+                    ),
+
+                "Path":
+                    str(
+                        check.path.relative_to(
+                            PROJECT_ROOT
+                        )
+                    ),
+            }
+            for check in checks
+        ]
+    )
 
     st.write("")
-
-    coverage = (
-        pd.DataFrame(
-            [
-                {
-                    "Artifact":
-                        label,
-
-                    "Status":
-                        (
-                            "AVAILABLE"
-                            if available
-                            else "MISSING"
-                        ),
-                }
-
-                for (
-                    label,
-                    available,
-                ) in checks
-            ]
-        )
-    )
 
     with st.expander(
         "Artifact inventory",
@@ -2487,24 +3167,25 @@ def _render_artifact_coverage() -> None:
     ):
 
         st.dataframe(
-            coverage,
+            inventory,
             use_container_width=True,
             hide_index=True,
         )
 
 
 # =============================================================================
-# Interpretation summary
+# Conclusions
 # =============================================================================
 
 
 def _render_conclusions(
     metadata: dict[str, Any],
+    shap_summary: dict[str, Any],
     mechanism_summary: dict[str, Any],
     difficulty_summary: dict[str, Any],
 ) -> None:
     """
-    Generate conclusions from available analytical evidence.
+    Generate evidence-grounded model-governance conclusions.
     """
 
     st.write("")
@@ -2514,46 +3195,36 @@ def _render_conclusions(
         "Model Interpretation Summary",
         (
             "Operational conclusions supported by the "
-            "current evaluation and explainability artifacts."
+            "available frozen evaluation and explainability evidence."
         ),
         eyebrow="MODEL GOVERNANCE",
     )
 
-    metrics = (
-        _final_metrics(
-            metadata
+    metrics = _final_metrics(
+        metadata
+    )
+
+    lift = _safe_float(
+        metrics.get(
+            "lift_at_3pct"
         )
     )
 
-    lift = (
-        _safe_float(
-            metrics.get(
-                "lift_at_3pct"
-            )
+    recall = _safe_float(
+        metrics.get(
+            "recall_at_3pct"
         )
     )
 
-    recall = (
-        _safe_float(
-            metrics.get(
-                "recall_at_3pct"
-            )
+    precision = _safe_float(
+        metrics.get(
+            "precision_at_3pct"
         )
     )
 
-    precision = (
-        _safe_float(
-            metrics.get(
-                "precision_at_3pct"
-            )
-        )
-    )
-
-    amount_capture = (
-        _safe_float(
-            metrics.get(
-                "fraud_amount_capture_at_3pct"
-            )
+    amount_capture = _safe_float(
+        metrics.get(
+            "fraud_amount_capture_at_3pct"
         )
     )
 
@@ -2575,9 +3246,13 @@ def _render_conclusions(
         )
     )
 
-    left, right = (
-        st.columns(2)
+    top_feature = (
+        shap_summary.get(
+            "top_feature"
+        )
     )
+
+    left, right = st.columns(2)
 
     with left:
 
@@ -2589,30 +3264,32 @@ def _render_conclusions(
                 "### Observed Strengths"
             )
 
+            observations = []
+
             if lift is not None:
 
-                st.write(
+                observations.append(
                     (
-                        "• At the 3% review policy, "
-                        f"model targeting delivers approximately "
-                        f"**{lift:.2f}× lift** versus untargeted review."
+                        "At the 3% review policy, model targeting "
+                        f"delivers approximately **{lift:.2f}× lift** "
+                        "versus random review."
                     )
                 )
 
             if recall is not None:
 
-                st.write(
+                observations.append(
                     (
-                        "• The selected 3% of claims captures "
+                        "The selected 3% of claims captures "
                         f"**{recall:.1%}** of synthetic fraud cases."
                     )
                 )
 
             if amount_capture is not None:
 
-                st.write(
+                observations.append(
                     (
-                        "• The same policy captures "
+                        "The same policy captures "
                         f"**{amount_capture:.1%}** of synthetic "
                         "fraud amount."
                     )
@@ -2620,29 +3297,46 @@ def _render_conclusions(
 
             if precision is not None:
 
-                st.write(
+                observations.append(
                     (
-                        "• Investigation yield at the policy "
+                        "Investigation yield at the policy "
                         f"point is **{precision:.1%}**."
                     )
                 )
 
             if strongest:
 
-                st.write(
+                observations.append(
                     (
-                        "• Highest observed mean risk by "
-                        f"fraud mechanism: **{strongest}**."
+                        "Highest observed mean risk among "
+                        f"fraud mechanisms: **{strongest}**."
                     )
                 )
 
-            st.write(
-                (
-                    "• Global explainability is expressed "
-                    "through business-level features rather than "
-                    "target or synthetic-generation variables."
+            if top_feature:
+
+                observations.append(
+                    (
+                        "Highest business-level global SHAP "
+                        f"importance: **{top_feature}**."
+                    )
                 )
-            )
+
+            if observations:
+
+                for observation in observations:
+                    st.write(
+                        f"• {observation}"
+                    )
+
+            else:
+
+                st.caption(
+                    (
+                        "No quantitative strength statement "
+                        "can be generated from current artifacts."
+                    )
+                )
 
     with right:
 
@@ -2654,46 +3348,56 @@ def _render_conclusions(
                 "### Known Limitations"
             )
 
+            limitations = []
+
             if weakest:
 
-                st.write(
+                limitations.append(
                     (
-                        "• Lowest observed mean fraud risk by "
-                        f"mechanism: **{weakest}**."
+                        "Lowest observed mean fraud risk among "
+                        f"mechanisms: **{weakest}**."
                     )
                 )
 
-            if difficulty_gap is not None:
+            if (
+                difficulty_gap is not None
+                and difficulty_gap > 0
+            ):
 
-                st.write(
+                limitations.append(
                     (
-                        "• Hard synthetic fraud receives "
-                        f"approximately **{difficulty_gap:.1%} lower "
-                        "mean risk** than easy fraud."
+                        "Hard synthetic fraud receives approximately "
+                        f"**{difficulty_gap:.1%} lower mean risk** "
+                        "than easy fraud."
                     )
                 )
 
-            st.write(
-                (
-                    "• SHAP contributions explain model behavior; "
-                    "they do not establish causal relationships."
-                )
+            limitations.extend(
+                [
+                    (
+                        "SHAP explains model behavior and "
+                        "does not establish causal relationships."
+                    ),
+                    (
+                        "A fraud-risk probability is a model output, "
+                        "not proof that a claim is fraudulent."
+                    ),
+                    (
+                        "Queue selection is an operational "
+                        "prioritization mechanism, not adjudication."
+                    ),
+                    (
+                        "Current validation is based on a synthetic "
+                        "health-insurance environment and does not "
+                        "establish real-world generalization."
+                    ),
+                ]
             )
 
-            st.write(
-                (
-                    "• Individual probability estimates must not "
-                    "be interpreted as proof that a claim is fraudulent."
+            for limitation in limitations:
+                st.write(
+                    f"• {limitation}"
                 )
-            )
-
-            st.write(
-                (
-                    "• Current validation is based on a synthetic "
-                    "health-insurance environment and therefore does "
-                    "not constitute evidence of real-world generalization."
-                )
-            )
 
     st.write("")
 
@@ -2709,56 +3413,105 @@ def render(
     client,
 ) -> None:
     """
-    Render complete model-performance and explainability workspace.
+    Render the complete model intelligence and governance workspace.
     """
 
     section_header(
         "Model Insights",
         (
             "Performance, explainability, robustness, "
-            "error analysis and governance of the frozen "
-            "fraud-risk model."
+            "failure analysis and governance of the "
+            "deployed fraud-risk model."
         ),
     )
 
-    metadata = (
-        _load_metadata()
-    )
+    # -------------------------------------------------------------------------
+    # Evidence sources
+    # -------------------------------------------------------------------------
+
+    metadata = _load_metadata()
 
     (
         runtime_model,
         runtime_error,
-    ) = (
-        _read_runtime_model(
-            client
-        )
+    ) = _read_runtime_model(
+        client
     )
+
+    policy = _review_policy(
+        metadata,
+        runtime_model,
+    )
+
+    # -------------------------------------------------------------------------
+    # Availability
+    # -------------------------------------------------------------------------
 
     if not metadata:
 
         info_panel(
-            "Model Metadata Unavailable",
+            "Frozen Metadata Unavailable",
             (
-                "The local frozen-model metadata artifact could "
-                "not be loaded. Runtime model information may still "
-                "be available from the inference API."
+                "The local model metadata artifact could not "
+                "be loaded. Runtime deployment information may "
+                "still be available, but historical evaluation "
+                "results cannot be fully verified."
             ),
             tone="warning",
         )
 
         st.write("")
 
-    _render_model_summary(
-        metadata
-    )
+    # -------------------------------------------------------------------------
+    # Runtime / governance
+    # -------------------------------------------------------------------------
 
-    _render_model_contract(
+    _render_runtime_status(
         metadata,
         runtime_model,
         runtime_error,
     )
 
-    _render_global_explainability()
+    # -------------------------------------------------------------------------
+    # Evaluation
+    # -------------------------------------------------------------------------
+
+    _render_model_summary(
+        metadata,
+        policy,
+    )
+
+    # -------------------------------------------------------------------------
+    # Contract
+    # -------------------------------------------------------------------------
+
+    _render_model_contract(
+        metadata,
+        runtime_model,
+    )
+
+    # -------------------------------------------------------------------------
+    # Architecture
+    # -------------------------------------------------------------------------
+
+    _render_inference_pipeline(
+        runtime_model,
+        metadata,
+    )
+
+    # -------------------------------------------------------------------------
+    # Explainability
+    # -------------------------------------------------------------------------
+
+    shap_summary = (
+        _render_global_explainability(
+            runtime_model
+        )
+    )
+
+    # -------------------------------------------------------------------------
+    # Robustness
+    # -------------------------------------------------------------------------
 
     mechanism_summary = (
         _render_mechanism_analysis()
@@ -2768,14 +3521,23 @@ def render(
         _render_difficulty_analysis()
     )
 
+    # -------------------------------------------------------------------------
+    # Diagnostics
+    # -------------------------------------------------------------------------
+
     _render_evaluation_diagnostics()
 
     _render_error_analysis()
+
+    # -------------------------------------------------------------------------
+    # Governance
+    # -------------------------------------------------------------------------
 
     _render_artifact_coverage()
 
     _render_conclusions(
         metadata,
+        shap_summary,
         mechanism_summary,
         difficulty_summary,
     )

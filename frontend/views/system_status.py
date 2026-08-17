@@ -6,11 +6,11 @@ import platform
 import sys
 import time
 
+from dataclasses import dataclass
 from datetime import (
     datetime,
     timezone,
 )
-
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +20,9 @@ import streamlit as st
 
 from components import (
     info_panel,
+    key_value_row,
     metric_card,
+    mini_metric,
     section_header,
 )
 
@@ -39,24 +41,19 @@ PROJECT_ROOT = (
 
 def _candidate_artifact_roots() -> list[Path]:
     """
-    Resolve artifact locations across local development,
-    Codespaces and Docker runtime.
+    Resolve possible artifact roots across local development,
+    Codespaces and containerized runtime environments.
     """
 
     candidates: list[Path] = []
 
-    configured = (
-        os.getenv(
-            "ARTIFACTS_ROOT"
-        )
+    configured = os.getenv(
+        "ARTIFACTS_ROOT"
     )
 
     if configured:
-
         candidates.append(
-            Path(
-                configured
-            )
+            Path(configured)
             .expanduser()
             .resolve()
         )
@@ -75,30 +72,18 @@ def _candidate_artifact_roots() -> list[Path]:
         ]
     )
 
-    unique: list[
-        Path
-    ] = []
-
-    seen: set[
-        str
-    ] = set()
+    unique: list[Path] = []
+    seen: set[str] = set()
 
     for path in candidates:
 
-        key = str(
-            path
-        )
+        key = str(path)
 
         if key in seen:
             continue
 
-        seen.add(
-            key
-        )
-
-        unique.append(
-            path
-        )
+        seen.add(key)
+        unique.append(path)
 
     return unique
 
@@ -107,33 +92,26 @@ def _find_artifact_root() -> Path:
     """
     Return the first existing artifact root.
 
-    Falls back to the configured/default project path so that
-    status diagnostics can still display the expected location.
+    If no candidate currently exists, return the configured or
+    project-default location so diagnostics can still expose
+    the expected runtime path.
     """
 
-    for path in (
-        _candidate_artifact_roots()
-    ):
+    for path in _candidate_artifact_roots():
 
         if (
             path.exists()
             and path.is_dir()
         ):
-
             return path
 
-    configured = (
-        os.getenv(
-            "ARTIFACTS_ROOT"
-        )
+    configured = os.getenv(
+        "ARTIFACTS_ROOT"
     )
 
     if configured:
-
         return (
-            Path(
-                configured
-            )
+            Path(configured)
             .expanduser()
         )
 
@@ -148,10 +126,21 @@ ARTIFACTS_ROOT = (
 )
 
 
-METADATA_PATH = (
+MODELS_DIR = (
+    ARTIFACTS_ROOT
+    / "models"
+)
+
+
+PREPROCESSORS_DIR = (
+    ARTIFACTS_ROOT
+    / "preprocessors"
+)
+
+
+METADATA_DIR = (
     ARTIFACTS_ROOT
     / "metadata"
-    / "health_fraud_model_metadata.json"
 )
 
 
@@ -159,6 +148,138 @@ EXPLAINABILITY_DIR = (
     ARTIFACTS_ROOT
     / "explainability"
 )
+
+
+FINAL_EVALUATION_DIR = (
+    METADATA_DIR
+    / "final_evaluation"
+)
+
+
+MODEL_PATH = (
+    MODELS_DIR
+    / "health_fraud_xgboost.joblib"
+)
+
+
+PREPROCESSOR_PATH = (
+    PREPROCESSORS_DIR
+    / "health_fraud_preprocessor.joblib"
+)
+
+
+METADATA_PATH = (
+    METADATA_DIR
+    / "health_fraud_model_metadata.json"
+)
+
+
+# =============================================================================
+# Expected analytical artifacts
+# =============================================================================
+
+
+EXPECTED_EXPLAINABILITY_ARTIFACTS = [
+    (
+        "Business SHAP importance",
+        EXPLAINABILITY_DIR
+        / "business_feature_importance.csv",
+    ),
+    (
+        "Mechanism score summary",
+        EXPLAINABILITY_DIR
+        / "mechanism_score_summary.csv",
+    ),
+    (
+        "False-negative mechanisms",
+        EXPLAINABILITY_DIR
+        / "false_negative_by_mechanism.csv",
+    ),
+    (
+        "Difficulty score summary",
+        EXPLAINABILITY_DIR
+        / "difficulty_score_summary.csv",
+    ),
+    (
+        "Global SHAP figure",
+        EXPLAINABILITY_DIR
+        / "figures"
+        / "01_shap_global_bar.png",
+    ),
+    (
+        "SHAP beeswarm",
+        EXPLAINABILITY_DIR
+        / "figures"
+        / "02_shap_beeswarm.png",
+    ),
+]
+
+
+EXPECTED_EVALUATION_ARTIFACTS = [
+    (
+        "Confusion Matrix",
+        FINAL_EVALUATION_DIR
+        / "01_confusion_matrix_top3.png",
+    ),
+    (
+        "Precision–Recall",
+        FINAL_EVALUATION_DIR
+        / "02_precision_recall_test.png",
+    ),
+    (
+        "ROC",
+        FINAL_EVALUATION_DIR
+        / "03_roc_test.png",
+    ),
+    (
+        "Calibration",
+        FINAL_EVALUATION_DIR
+        / "04_calibration_test.png",
+    ),
+    (
+        "Capacity Curve",
+        FINAL_EVALUATION_DIR
+        / "05_capacity_curve.png",
+    ),
+]
+
+
+# =============================================================================
+# Diagnostic structures
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class ArtifactStatus:
+    """
+    Status of one expected model artifact.
+    """
+
+    name: str
+    category: str
+    path: Path
+    required_for_inference: bool
+
+    @property
+    def available(self) -> bool:
+        return (
+            self.path.exists()
+            and self.path.is_file()
+        )
+
+    @property
+    def size_bytes(self) -> int:
+        if not self.available:
+            return 0
+
+        try:
+            return (
+                self.path.stat()
+                .st_size
+            )
+
+        except OSError:
+            return 0
 
 
 # =============================================================================
@@ -171,28 +292,22 @@ def _safe_float(
     default: float | None = None,
 ) -> float | None:
     """
-    Convert a value to a finite float.
+    Convert a value into a finite float.
     """
 
     try:
-
-        result = float(
-            value
-        )
-
-        if np.isfinite(
-            result
-        ):
-
-            return result
+        result = float(value)
 
     except (
         TypeError,
         ValueError,
     ):
-        pass
+        return default
 
-    return default
+    if not np.isfinite(result):
+        return default
+
+    return result
 
 
 def _safe_int(
@@ -200,67 +315,40 @@ def _safe_int(
     default: int = 0,
 ) -> int:
     """
-    Convert numeric-like values safely to integer.
+    Convert numeric-like values safely into integers.
     """
 
     try:
 
-        if pd.isna(
-            value
-        ):
-
+        if pd.isna(value):
             return default
 
-        return int(
-            round(
-                float(
-                    value
-                )
-            )
-        )
+        result = float(value)
 
     except (
         TypeError,
         ValueError,
     ):
-
         return default
 
+    if not np.isfinite(result):
+        return default
 
-def _safe_get(
-    payload: Any,
-    key: str,
-    default: Any = "—",
-) -> Any:
-    """
-    Read a dictionary field safely.
-    """
-
-    if isinstance(
-        payload,
-        dict,
-    ):
-
-        return payload.get(
-            key,
-            default,
-        )
-
-    return default
+    return int(
+        round(result)
+    )
 
 
 def _format_bytes(
     size: int,
 ) -> str:
     """
-    Format byte counts for human-readable diagnostics.
+    Format byte counts for diagnostics.
     """
 
     value = float(
         max(
-            int(
-                size
-            ),
+            int(size),
             0,
         )
     )
@@ -279,7 +367,6 @@ def _format_bytes(
             value < 1024
             or unit == "TB"
         ):
-
             return (
                 f"{value:.1f} {unit}"
             )
@@ -289,101 +376,28 @@ def _format_bytes(
     return "—"
 
 
-def _count_files(
-    path: Path,
-) -> int:
+def _format_latency(
+    value: Any,
+) -> str:
     """
-    Count files recursively without failing on inaccessible entries.
-    """
-
-    if not path.exists():
-
-        return 0
-
-    if path.is_file():
-
-        return 1
-
-    count = 0
-
-    try:
-
-        for item in path.rglob(
-            "*"
-        ):
-
-            try:
-
-                if item.is_file():
-
-                    count += 1
-
-            except OSError:
-
-                continue
-
-    except OSError:
-
-        return 0
-
-    return count
-
-
-def _directory_size(
-    path: Path,
-) -> int:
-    """
-    Compute total directory size defensively.
+    Format latency consistently.
     """
 
-    if not path.exists():
+    latency = _safe_float(
+        value
+    )
 
-        return 0
+    if latency is None:
+        return "—"
 
-    if path.is_file():
-
-        try:
-
-            return (
-                path.stat()
-                .st_size
-            )
-
-        except OSError:
-
-            return 0
-
-    total = 0
-
-    try:
-
-        for item in path.rglob(
-            "*"
-        ):
-
-            try:
-
-                if item.is_file():
-
-                    total += (
-                        item.stat()
-                        .st_size
-                    )
-
-            except OSError:
-
-                continue
-
-    except OSError:
-
-        return total
-
-    return total
+    return (
+        f"{latency:.1f} ms"
+    )
 
 
 def _utc_now() -> str:
     """
-    Return current UTC timestamp.
+    Return a human-readable UTC timestamp.
     """
 
     return (
@@ -394,6 +408,80 @@ def _utc_now() -> str:
             "%Y-%m-%d %H:%M:%S UTC"
         )
     )
+
+
+def _nonempty_dict(
+    value: Any,
+) -> dict[str, Any]:
+    """
+    Normalize arbitrary values into dictionaries.
+    """
+
+    return (
+        value
+        if isinstance(
+            value,
+            dict,
+        )
+        else {}
+    )
+
+
+def _normalized_contract_value(
+    value: Any,
+) -> Any:
+    """
+    Normalize contract values before comparison.
+    """
+
+    if value is None:
+        return None
+
+    if isinstance(
+        value,
+        bool,
+    ):
+        return value
+
+    if isinstance(
+        value,
+        (int, np.integer),
+    ):
+        return int(value)
+
+    if isinstance(
+        value,
+        (float, np.floating),
+    ):
+
+        number = float(value)
+
+        return (
+            number
+            if np.isfinite(number)
+            else None
+        )
+
+    return str(value).strip()
+
+
+def _path_status(
+    path: Path,
+) -> str:
+    """
+    Return compact filesystem status.
+    """
+
+    if not path.exists():
+        return "MISSING"
+
+    if path.is_file():
+        return "FILE"
+
+    if path.is_dir():
+        return "DIRECTORY"
+
+    return "UNKNOWN"
 
 
 # =============================================================================
@@ -416,8 +504,10 @@ def _read_metadata(
         path_string
     )
 
-    if not path.exists():
-
+    if (
+        not path.exists()
+        or not path.is_file()
+    ):
         return {}
 
     try:
@@ -427,27 +517,131 @@ def _read_metadata(
             encoding="utf-8",
         ) as file:
 
-            payload = (
-                json.load(
-                    file
-                )
+            payload = json.load(
+                file
             )
 
     except (
         OSError,
         json.JSONDecodeError,
     ):
-
         return {}
 
-    if not isinstance(
-        payload,
-        dict,
-    ):
+    return (
+        payload
+        if isinstance(
+            payload,
+            dict,
+        )
+        else {}
+    )
 
-        return {}
 
-    return payload
+# =============================================================================
+# Artifact inventory
+# =============================================================================
+
+
+def _artifact_inventory() -> list[
+    ArtifactStatus
+]:
+    """
+    Build the expected model-system artifact inventory.
+    """
+
+    inventory = [
+        ArtifactStatus(
+            name="XGBoost Model",
+            category="Inference",
+            path=MODEL_PATH,
+            required_for_inference=True,
+        ),
+        ArtifactStatus(
+            name="Frozen Preprocessor",
+            category="Inference",
+            path=PREPROCESSOR_PATH,
+            required_for_inference=True,
+        ),
+        ArtifactStatus(
+            name="Model Metadata",
+            category="Governance",
+            path=METADATA_PATH,
+            required_for_inference=True,
+        ),
+    ]
+
+    inventory.extend(
+        ArtifactStatus(
+            name=name,
+            category="Explainability",
+            path=path,
+            required_for_inference=False,
+        )
+        for name, path
+        in EXPECTED_EXPLAINABILITY_ARTIFACTS
+    )
+
+    inventory.extend(
+        ArtifactStatus(
+            name=name,
+            category="Evaluation",
+            path=path,
+            required_for_inference=False,
+        )
+        for name, path
+        in EXPECTED_EVALUATION_ARTIFACTS
+    )
+
+    return inventory
+
+
+def _inference_artifacts_ready() -> bool:
+    """
+    Check whether all local inference artifacts exist.
+    """
+
+    inference_artifacts = [
+        artifact
+        for artifact
+        in _artifact_inventory()
+        if artifact.required_for_inference
+    ]
+
+    return bool(
+        inference_artifacts
+        and all(
+            artifact.available
+            for artifact
+            in inference_artifacts
+        )
+    )
+
+
+def _analytics_coverage() -> tuple[
+    int,
+    int,
+]:
+    """
+    Return analytical artifact availability.
+    """
+
+    analytical = [
+        artifact
+        for artifact
+        in _artifact_inventory()
+        if not artifact.required_for_inference
+    ]
+
+    available = sum(
+        artifact.available
+        for artifact
+        in analytical
+    )
+
+    return (
+        available,
+        len(analytical),
+    )
 
 
 # =============================================================================
@@ -459,42 +653,23 @@ def _check_api(
     client,
 ) -> dict[str, Any]:
     """
-    Perform one health request and one model-contract request.
+    Execute health and model-contract diagnostics.
 
-    Diagnostics intentionally distinguish connectivity from
-    model-readiness.
+    Connectivity, endpoint validity and model readiness are kept
+    separate so failures remain operationally interpretable.
     """
 
-    result: dict[
-        str,
-        Any,
-    ] = {
-        "online":
-            False,
-
-        "health_ok":
-            False,
-
-        "model_info_ok":
-            False,
-
-        "health":
-            {},
-
-        "model":
-            {},
-
-        "health_latency_ms":
-            None,
-
-        "model_info_latency_ms":
-            None,
-
-        "total_latency_ms":
-            None,
-
-        "error":
-            None,
+    result: dict[str, Any] = {
+        "online": False,
+        "health_ok": False,
+        "model_info_ok": False,
+        "health": {},
+        "model": {},
+        "health_latency_ms": None,
+        "model_info_latency_ms": None,
+        "total_latency_ms": None,
+        "health_error": None,
+        "model_info_error": None,
     }
 
     total_start = (
@@ -502,7 +677,7 @@ def _check_api(
     )
 
     # -------------------------------------------------------------------------
-    # Health endpoint
+    # Health
     # -------------------------------------------------------------------------
 
     try:
@@ -511,11 +686,11 @@ def _check_api(
             time.perf_counter()
         )
 
-        health = (
-            client.health()
-        )
+        health = client.health()
 
-        health_latency = (
+        result[
+            "health_latency_ms"
+        ] = (
             (
                 time.perf_counter()
                 - start
@@ -524,8 +699,8 @@ def _check_api(
         )
 
         result[
-            "health_latency_ms"
-        ] = health_latency
+            "online"
+        ] = True
 
         if isinstance(
             health,
@@ -540,27 +715,21 @@ def _check_api(
                 "health_ok"
             ] = True
 
-            result[
-                "online"
-            ] = True
-
         else:
 
             result[
-                "error"
+                "health_error"
             ] = (
                 "Health endpoint returned "
                 "an invalid payload."
             )
 
-            return result
-
     except Exception as exc:
 
         result[
-            "error"
-        ] = str(
-            exc
+            "health_error"
+        ] = (
+            f"{type(exc).__name__}: {exc}"
         )
 
         result[
@@ -576,7 +745,7 @@ def _check_api(
         return result
 
     # -------------------------------------------------------------------------
-    # Model contract
+    # Model info
     # -------------------------------------------------------------------------
 
     try:
@@ -585,21 +754,17 @@ def _check_api(
             time.perf_counter()
         )
 
-        model = (
-            client.model_info()
-        )
+        model = client.model_info()
 
-        model_latency = (
+        result[
+            "model_info_latency_ms"
+        ] = (
             (
                 time.perf_counter()
                 - start
             )
             * 1000
         )
-
-        result[
-            "model_info_latency_ms"
-        ] = model_latency
 
         if isinstance(
             model,
@@ -617,7 +782,7 @@ def _check_api(
         else:
 
             result[
-                "error"
+                "model_info_error"
             ] = (
                 "Model-info endpoint returned "
                 "an invalid payload."
@@ -626,9 +791,9 @@ def _check_api(
     except Exception as exc:
 
         result[
-            "error"
-        ] = str(
-            exc
+            "model_info_error"
+        ] = (
+            f"{type(exc).__name__}: {exc}"
         )
 
     result[
@@ -645,57 +810,117 @@ def _check_api(
 
 
 # =============================================================================
-# Readiness interpretation
+# Runtime readiness
 # =============================================================================
+
+
+def _health_reports_ready(
+    diagnostics: dict[str, Any],
+) -> bool:
+    """
+    Interpret the semantic health endpoint contract.
+    """
+
+    health = _nonempty_dict(
+        diagnostics.get(
+            "health"
+        )
+    )
+
+    if not health:
+        return False
+
+    status = (
+        str(
+            health.get(
+                "status",
+                "",
+            )
+        )
+        .strip()
+        .lower()
+    )
+
+    return (
+        status == "ok"
+        and health.get(
+            "model_loaded"
+        )
+        is True
+    )
 
 
 def _api_model_ready(
     diagnostics: dict[str, Any],
 ) -> bool:
     """
-    Determine whether the backend confirms a usable model.
+    Confirm that the API exposes a usable inference model.
     """
 
     if not diagnostics.get(
-        "online",
-        False,
+        "online"
     ):
-
         return False
 
-    health = (
-        diagnostics.get(
-            "health"
-        )
-        or {}
-    )
+    if not diagnostics.get(
+        "health_ok"
+    ):
+        return False
 
-    explicit = (
-        health.get(
-            "model_loaded"
-        )
-    )
+    if not diagnostics.get(
+        "model_info_ok"
+    ):
+        return False
 
-    if explicit is not None:
+    if not _health_reports_ready(
+        diagnostics
+    ):
+        return False
 
-        return bool(
-            explicit
-        )
-
-    model = (
+    model = _nonempty_dict(
         diagnostics.get(
             "model"
         )
-        or {}
     )
 
-    return bool(
+    required = [
+        "model_name",
+        "model_version",
+        "target",
+        "feature_count",
+    ]
+
+    return all(
+        model.get(key)
+        is not None
+        for key in required
+    )
+
+
+def _runtime_explainability_ready(
+    diagnostics: dict[str, Any],
+) -> bool:
+    """
+    Determine whether the served model reports explainability support.
+    """
+
+    model = _nonempty_dict(
+        diagnostics.get(
+            "model"
+        )
+    )
+
+    explainability = _nonempty_dict(
         model.get(
-            "model_name"
+            "explainability"
         )
-        and model.get(
-            "model_version"
+    )
+
+    return (
+        explainability.get(
+            "available"
         )
+        is True
     )
 
 
@@ -703,16 +928,275 @@ def _analytics_ready(
     metadata: dict[str, Any],
 ) -> bool:
     """
-    Determine whether analytical dashboard assets are present.
+    Determine whether model-insight assets are sufficiently available.
     """
+
+    available, total = (
+        _analytics_coverage()
+    )
 
     return bool(
         metadata
-        and _count_files(
-            EXPLAINABILITY_DIR
-        )
-        > 0
+        and total > 0
+        and available == total
     )
+
+
+# =============================================================================
+# Contract consistency
+# =============================================================================
+
+
+def _contract_comparison(
+    diagnostics: dict[str, Any],
+    metadata: dict[str, Any],
+) -> tuple[
+    list[dict[str, str]],
+    int,
+    int,
+]:
+    """
+    Compare frozen analytical metadata with live deployment contract.
+    """
+
+    runtime = _nonempty_dict(
+        diagnostics.get(
+            "model"
+        )
+    )
+
+    if (
+        not runtime
+        or not metadata
+    ):
+        return (
+            [],
+            0,
+            0,
+        )
+
+    rows: list[
+        dict[str, str]
+    ] = []
+
+    mismatches = 0
+    comparisons = 0
+
+    fields = [
+        (
+            "model_name",
+            "Model Name",
+        ),
+        (
+            "model_version",
+            "Model Version",
+        ),
+        (
+            "target",
+            "Prediction Target",
+        ),
+        (
+            "feature_count",
+            "Source Feature Count",
+        ),
+        (
+            "transformed_feature_count",
+            "Transformed Feature Count",
+        ),
+        (
+            "probability_method",
+            "Probability Method",
+        ),
+    ]
+
+    for key, label in fields:
+
+        local = metadata.get(
+            key
+        )
+
+        live = runtime.get(
+            key
+        )
+
+        if (
+            local is None
+            and live is None
+        ):
+            continue
+
+        comparisons += 1
+
+        match = (
+            local is not None
+            and live is not None
+            and _normalized_contract_value(
+                local
+            )
+            ==
+            _normalized_contract_value(
+                live
+            )
+        )
+
+        if not match:
+            mismatches += 1
+
+        rows.append(
+            {
+                "Field": label,
+                "Local Artifact": (
+                    "—"
+                    if local is None
+                    else str(local)
+                ),
+                "Runtime API": (
+                    "—"
+                    if live is None
+                    else str(live)
+                ),
+                "Status": (
+                    "MATCH"
+                    if match
+                    else "MISMATCH"
+                ),
+            }
+        )
+
+    # -------------------------------------------------------------------------
+    # Review policy
+    # -------------------------------------------------------------------------
+
+    local_policy = _nonempty_dict(
+        metadata.get(
+            "review_policy"
+        )
+    )
+
+    runtime_policy = _nonempty_dict(
+        runtime.get(
+            "review_policy"
+        )
+    )
+
+    policy_fields = [
+        (
+            "type",
+            "Review Policy",
+        ),
+        (
+            "fraction",
+            "Review Fraction",
+        ),
+    ]
+
+    for key, label in policy_fields:
+
+        local = local_policy.get(
+            key
+        )
+
+        live = runtime_policy.get(
+            key
+        )
+
+        if (
+            local is None
+            and live is None
+        ):
+            continue
+
+        comparisons += 1
+
+        if key == "fraction":
+
+            local_float = _safe_float(
+                local
+            )
+
+            live_float = _safe_float(
+                live
+            )
+
+            match = (
+                local_float is not None
+                and live_float is not None
+                and np.isclose(
+                    local_float,
+                    live_float,
+                    rtol=0.0,
+                    atol=1e-12,
+                )
+            )
+
+        else:
+
+            match = (
+                local is not None
+                and live is not None
+                and str(local)
+                == str(live)
+            )
+
+        if not match:
+            mismatches += 1
+
+        rows.append(
+            {
+                "Field": label,
+                "Local Artifact": (
+                    "—"
+                    if local is None
+                    else str(local)
+                ),
+                "Runtime API": (
+                    "—"
+                    if live is None
+                    else str(live)
+                ),
+                "Status": (
+                    "MATCH"
+                    if match
+                    else "MISMATCH"
+                ),
+            }
+        )
+
+    return (
+        rows,
+        comparisons,
+        mismatches,
+    )
+
+
+def _contracts_consistent(
+    diagnostics: dict[str, Any],
+    metadata: dict[str, Any],
+) -> bool | None:
+    """
+    Return deployment consistency state.
+    """
+
+    (
+        _,
+        comparisons,
+        mismatches,
+    ) = _contract_comparison(
+        diagnostics,
+        metadata,
+    )
+
+    if comparisons == 0:
+        return None
+
+    return (
+        mismatches == 0
+    )
+
+
+# =============================================================================
+# Global system status
+# =============================================================================
 
 
 def _system_status(
@@ -721,21 +1205,44 @@ def _system_status(
 ) -> tuple[
     str,
     str,
+    str,
 ]:
     """
-    Derive one global application status.
+    Derive global application readiness.
+
+    READY:
+        inference operational, model contract consistent and
+        analytical evidence complete.
+
+    DEGRADED:
+        inference remains operational but one or more non-critical
+        governance / analytical checks are incomplete.
+
+    NOT READY:
+        inference itself cannot be guaranteed.
     """
 
-    api_ready = (
-        diagnostics.get(
-            "online",
-            False,
+    inference_ready = (
+        _api_model_ready(
+            diagnostics
         )
     )
 
-    model_ready = (
-        _api_model_ready(
-            diagnostics
+    if not inference_ready:
+
+        return (
+            "NOT READY",
+            "danger",
+            (
+                "End-to-end inference "
+                "cannot be guaranteed."
+            ),
+        )
+
+    consistent = (
+        _contracts_consistent(
+            diagnostics,
+            metadata,
         )
     )
 
@@ -745,30 +1252,39 @@ def _system_status(
         )
     )
 
+    local_inference_ready = (
+        _inference_artifacts_ready()
+    )
+
+    explainability_ready = (
+        _runtime_explainability_ready(
+            diagnostics
+        )
+    )
+
     if (
-        api_ready
-        and model_ready
+        consistent is True
         and analytics_ready
+        and local_inference_ready
+        and explainability_ready
     ):
 
         return (
             "READY",
             "success",
-        )
-
-    if (
-        api_ready
-        and model_ready
-    ):
-
-        return (
-            "DEGRADED",
-            "warning",
+            (
+                "Inference, governance and "
+                "analytical evidence verified."
+            ),
         )
 
     return (
-        "NOT READY",
-        "danger",
+        "DEGRADED",
+        "warning",
+        (
+            "Inference is operational, but one or more "
+            "governance or analytical checks are incomplete."
+        ),
     )
 
 
@@ -782,16 +1298,25 @@ def _render_service_health(
     metadata: dict[str, Any],
 ) -> None:
     """
-    Render top-level operational health.
+    Render primary operational health.
     """
 
     section_header(
         "Inference Service",
         (
-            "Live connectivity, latency and readiness "
-            "of the deployed scoring backend."
+            "Live connectivity, semantic health, latency "
+            "and readiness of the deployed scoring backend."
         ),
         eyebrow="RUNTIME HEALTH",
+    )
+
+    (
+        overall_status,
+        overall_tone,
+        overall_description,
+    ) = _system_status(
+        diagnostics,
+        metadata,
     )
 
     online = bool(
@@ -800,38 +1325,21 @@ def _render_service_health(
         )
     )
 
+    health_ok = bool(
+        diagnostics.get(
+            "health_ok"
+        )
+    )
+
+    model_info_ok = bool(
+        diagnostics.get(
+            "model_info_ok"
+        )
+    )
+
     model_ready = (
         _api_model_ready(
             diagnostics
-        )
-    )
-
-    model = (
-        diagnostics.get(
-            "model"
-        )
-        or {}
-    )
-
-    (
-        overall_status,
-        overall_tone,
-    ) = (
-        _system_status(
-            diagnostics,
-            metadata,
-        )
-    )
-
-    health_latency = (
-        diagnostics.get(
-            "health_latency_ms"
-        )
-    )
-
-    total_latency = (
-        diagnostics.get(
-            "total_latency_ms"
         )
     )
 
@@ -844,7 +1352,7 @@ def _render_service_health(
         metric_card(
             "System Status",
             overall_status,
-            "Application readiness",
+            overall_description,
             tone=overall_tone,
         )
 
@@ -858,9 +1366,9 @@ def _render_service_health(
                 else "OFFLINE"
             ),
             (
-                "Inference reachable"
+                "Backend reachable"
                 if online
-                else "Connection failed"
+                else "Connection unavailable"
             ),
             tone=(
                 "success"
@@ -872,66 +1380,104 @@ def _render_service_health(
     with c3:
 
         metric_card(
-            "Health Latency",
+            "Health Endpoint",
             (
-                f"{health_latency:.1f} ms"
-                if health_latency
-                is not None
-                else "—"
+                "HEALTHY"
+                if (
+                    health_ok
+                    and _health_reports_ready(
+                        diagnostics
+                    )
+                )
+                else "FAILED"
             ),
-            "GET /health",
-            tone="info",
+            _format_latency(
+                diagnostics.get(
+                    "health_latency_ms"
+                )
+            ),
+            tone=(
+                "success"
+                if (
+                    health_ok
+                    and _health_reports_ready(
+                        diagnostics
+                    )
+                )
+                else "danger"
+            ),
         )
 
     with c4:
 
         metric_card(
-            "Total Diagnostic",
+            "Model Contract",
             (
-                f"{total_latency:.1f} ms"
-                if total_latency
-                is not None
-                else "—"
+                "AVAILABLE"
+                if model_info_ok
+                else "FAILED"
             ),
-            "Health + model contract",
-            tone="info",
+            _format_latency(
+                diagnostics.get(
+                    "model_info_latency_ms"
+                )
+            ),
+            tone=(
+                "success"
+                if model_info_ok
+                else "danger"
+            ),
         )
 
     st.write("")
 
-    c1, c2 = (
-        st.columns(2)
+    model = _nonempty_dict(
+        diagnostics.get(
+            "model"
+        )
+    )
+
+    c1, c2, c3, c4 = (
+        st.columns(4)
     )
 
     with c1:
 
-        metric_card(
-            "Deployed Model",
+        mini_metric(
+            "Model",
             str(
                 model.get(
                     "model_name",
                     "—",
                 )
             ),
-            (
-                "Backend estimator"
-            ),
+            helper="Runtime estimator",
             tone="info",
         )
 
     with c2:
 
-        metric_card(
-            "Model Loaded",
+        mini_metric(
+            "Version",
+            str(
+                model.get(
+                    "model_version",
+                    "—",
+                )
+            ),
+            helper="Deployment version",
+        )
+
+    with c3:
+
+        mini_metric(
+            "Inference",
             (
-                "YES"
+                "READY"
                 if model_ready
-                else "NO"
+                else "NOT READY"
             ),
-            (
-                f"Version "
-                f"{model.get('model_version', '—')}"
-            ),
+            helper="End-to-end scoring",
             tone=(
                 "success"
                 if model_ready
@@ -939,18 +1485,28 @@ def _render_service_health(
             ),
         )
 
+    with c4:
+
+        mini_metric(
+            "Diagnostic Time",
+            _format_latency(
+                diagnostics.get(
+                    "total_latency_ms"
+                )
+            ),
+            helper="Health + contract",
+        )
+
     st.write("")
 
-    if (
-        online
-        and model_ready
-    ):
+    if model_ready:
 
         info_panel(
             "End-to-End Inference Ready",
             (
-                "The API is reachable and the backend "
-                "reports a usable frozen model."
+                "The API is reachable, /health reports a loaded "
+                "model and /model-info exposes a valid deployment "
+                "contract. Fraud-risk scoring is operational."
             ),
             tone="success",
         )
@@ -958,12 +1514,12 @@ def _render_service_health(
     elif online:
 
         info_panel(
-            "API Reachable — Model Not Ready",
+            "Backend Reachable — Inference Not Ready",
             (
-                "The inference API responds, but model readiness "
-                "could not be confirmed."
+                "The backend responds, but the complete inference "
+                "contract could not be validated."
             ),
-            tone="warning",
+            tone="danger",
         )
 
     else:
@@ -971,29 +1527,48 @@ def _render_service_health(
         info_panel(
             "Inference Service Unavailable",
             (
-                "The frontend cannot currently reach "
-                "the inference API."
+                "The Streamlit frontend cannot currently "
+                "reach the FastAPI inference service."
             ),
             tone="danger",
         )
 
-        error = (
+    errors = [
+        (
+            "Health",
             diagnostics.get(
-                "error"
-            )
-        )
+                "health_error"
+            ),
+        ),
+        (
+            "Model info",
+            diagnostics.get(
+                "model_info_error"
+            ),
+        ),
+    ]
 
-        if error:
+    errors = [
+        item
+        for item in errors
+        if item[1]
+    ]
 
-            with st.expander(
-                "Connection error",
-                expanded=False,
-            ):
+    if errors:
+
+        with st.expander(
+            "Runtime errors",
+            expanded=False,
+        ):
+
+            for label, error in errors:
+
+                st.markdown(
+                    f"**{label}**"
+                )
 
                 st.code(
-                    str(
-                        error
-                    ),
+                    str(error),
                     language=None,
                 )
 
@@ -1008,7 +1583,7 @@ def _render_model_contract(
     metadata: dict[str, Any],
 ) -> None:
     """
-    Render live model identity and policy.
+    Render deployment identity and inference contract.
     """
 
     st.write("")
@@ -1017,68 +1592,63 @@ def _render_model_contract(
     section_header(
         "Deployed Model Contract",
         (
-            "Runtime model identity, feature contract "
-            "and operational review policy."
+            "Runtime model identity, source and transformed "
+            "feature spaces, explainability and review policy."
         ),
         eyebrow="MODEL GOVERNANCE",
     )
 
-    api_model = (
+    runtime = _nonempty_dict(
         diagnostics.get(
             "model"
         )
-        or {}
     )
 
-    # Runtime API has priority for deployment identity.
     source = {
         **metadata,
-        **api_model,
+        **runtime,
     }
 
-    model_name = (
-        source.get(
-            "model_name",
-            "—",
+    explainability = _nonempty_dict(
+        runtime.get(
+            "explainability"
         )
     )
 
-    model_version = (
-        source.get(
-            "model_version",
-            "—",
+    if not explainability:
+
+        explainability = _nonempty_dict(
+            metadata.get(
+                "explainability"
+            )
+        )
+
+    policy = _nonempty_dict(
+        runtime.get(
+            "review_policy"
         )
     )
 
-    target = (
-        source.get(
-            "target",
-            "—",
+    if not policy:
+
+        policy = _nonempty_dict(
+            metadata.get(
+                "review_policy"
+            )
+        )
+
+    fraction = _safe_float(
+        policy.get(
+            "fraction"
         )
     )
 
-    feature_count = (
-        source.get(
-            "feature_count",
-            "—",
-        )
-    )
-
-    probability_method = (
-        source.get(
-            "probability_method"
-        )
-        or "—"
-    )
-
-    left, right = (
-        st.columns(
-            [
-                1.3,
-                1,
-            ],
-            gap="large",
-        )
+    left, right = st.columns(
+        [
+            1.3,
+            1,
+        ],
+        gap="large",
     )
 
     with left:
@@ -1091,16 +1661,17 @@ def _render_model_contract(
                 "### Model Identity"
             )
 
-            c1, c2 = (
-                st.columns(2)
-            )
+            c1, c2 = st.columns(2)
 
             with c1:
 
                 metric_card(
                     "Algorithm",
                     str(
-                        model_name
+                        source.get(
+                            "model_name",
+                            "—",
+                        )
                     ),
                     "Runtime estimator",
                     tone="info",
@@ -1111,48 +1682,86 @@ def _render_model_contract(
                 metric_card(
                     "Version",
                     str(
-                        model_version
+                        source.get(
+                            "model_version",
+                            "—",
+                        )
                     ),
                     "Frozen deployment version",
                 )
 
             st.write("")
 
-            c1, c2 = (
-                st.columns(2)
-            )
+            c1, c2, c3 = st.columns(3)
 
             with c1:
 
-                metric_card(
-                    "Feature Count",
+                mini_metric(
+                    "Source Features",
                     str(
-                        feature_count
+                        source.get(
+                            "feature_count",
+                            "—",
+                        )
                     ),
-                    "Business input features",
+                    helper="Business input",
                 )
 
             with c2:
 
-                metric_card(
-                    "Probability Method",
+                mini_metric(
+                    "Transformed",
                     str(
-                        probability_method
+                        source.get(
+                            "transformed_feature_count",
+                            "—",
+                        )
                     ),
-                    "Model output contract",
+                    helper="Model feature space",
+                    tone="info",
+                )
+
+            with c3:
+
+                mini_metric(
+                    "Target",
+                    str(
+                        source.get(
+                            "target",
+                            "—",
+                        )
+                    ),
+                    helper="Prediction target",
                 )
 
             st.write("")
+            st.divider()
 
-            st.caption(
-                "PREDICTION TARGET"
+            key_value_row(
+                "Probability method",
+                str(
+                    source.get(
+                        "probability_method",
+                        "—",
+                    )
+                ),
+                monospace=True,
             )
 
-            st.code(
+            key_value_row(
+                "Model artifact",
                 str(
-                    target
+                    MODEL_PATH.name
                 ),
-                language=None,
+                monospace=True,
+            )
+
+            key_value_row(
+                "Preprocessor",
+                str(
+                    PREPROCESSOR_PATH.name
+                ),
+                monospace=True,
             )
 
     with right:
@@ -1162,57 +1771,84 @@ def _render_model_contract(
         ):
 
             st.markdown(
-                "### Operational Policy"
-            )
-
-            policy = (
-                source.get(
-                    "review_policy",
-                    {},
-                )
-            )
-
-            if not isinstance(
-                policy,
-                dict,
-            ):
-
-                policy = {}
-
-            fraction = (
-                _safe_float(
-                    policy.get(
-                        "fraction"
-                    )
-                )
+                "### Operational Contract"
             )
 
             metric_card(
                 "Review Capacity",
                 (
                     f"{fraction:.0%}"
-                    if fraction
-                    is not None
+                    if fraction is not None
                     else "—"
                 ),
-                "Portfolio selection policy",
+                "Portfolio investigation policy",
                 tone="info",
             )
 
             st.write("")
 
-            st.write(
-                (
-                    "**Policy type:** "
-                    f"{policy.get('type', '—')}"
-                )
+            key_value_row(
+                "Policy",
+                str(
+                    policy.get(
+                        "type",
+                        "—",
+                    )
+                ),
+                monospace=True,
             )
+
+            key_value_row(
+                "Explainability",
+                (
+                    "AVAILABLE"
+                    if explainability.get(
+                        "available"
+                    )
+                    is True
+                    else "UNAVAILABLE"
+                ),
+            )
+
+            key_value_row(
+                "Method",
+                str(
+                    explainability.get(
+                        "method",
+                        "—",
+                    )
+                ),
+                monospace=True,
+            )
+
+            key_value_row(
+                "Output space",
+                str(
+                    explainability.get(
+                        "output_space",
+                        "—",
+                    )
+                ),
+                monospace=True,
+            )
+
+            key_value_row(
+                "SHAP dimensions",
+                str(
+                    explainability.get(
+                        "transformed_feature_count",
+                        "—",
+                    )
+                ),
+            )
+
+            st.write("")
 
             st.caption(
                 (
-                    "Review capacity controls model-driven "
-                    "portfolio prioritization. Final investigation "
-                    "decisions remain human."
+                    "Review capacity determines portfolio "
+                    "prioritization. It is not an individual "
+                    "fraud adjudication threshold."
                 )
             )
 
@@ -1227,7 +1863,7 @@ def _render_contract_consistency(
     metadata: dict[str, Any],
 ) -> None:
     """
-    Compare local frozen metadata with live API contract.
+    Verify frozen analytical metadata against runtime deployment.
     """
 
     st.write("")
@@ -1236,25 +1872,26 @@ def _render_contract_consistency(
     section_header(
         "Contract Consistency",
         (
-            "Comparison between analytical metadata "
-            "and the model currently served by the API."
+            "Verification that frozen analytical evidence "
+            "belongs to the model currently served by the API."
         ),
         eyebrow="DEPLOYMENT VERIFICATION",
     )
 
-    api_model = (
+    runtime = _nonempty_dict(
         diagnostics.get(
             "model"
         )
-        or {}
     )
 
-    if not api_model:
+    if not runtime:
 
         info_panel(
             "Runtime Contract Unavailable",
             (
-                "The live model contract could not be retrieved."
+                "The live model contract could not be "
+                "retrieved, so deployment consistency "
+                "cannot be verified."
             ),
             tone="warning",
         )
@@ -1264,150 +1901,101 @@ def _render_contract_consistency(
     if not metadata:
 
         info_panel(
-            "Local Metadata Unavailable",
+            "Frozen Metadata Unavailable",
             (
-                "The runtime model is available, but no local "
-                "metadata exists for comparison."
+                "The runtime model is available, but local "
+                "evaluation metadata is missing."
             ),
             tone="warning",
         )
 
         return
 
-    fields = [
-        (
-            "model_name",
-            "Model",
-        ),
-        (
-            "model_version",
-            "Version",
-        ),
-        (
-            "target",
-            "Target",
-        ),
-        (
-            "feature_count",
-            "Feature Count",
-        ),
-    ]
+    (
+        rows,
+        comparisons,
+        mismatches,
+    ) = _contract_comparison(
+        diagnostics,
+        metadata,
+    )
 
-    rows: list[
-        dict[str, str]
-    ] = []
+    c1, c2, c3 = (
+        st.columns(3)
+    )
 
-    mismatch_count = 0
-    comparison_count = 0
+    with c1:
 
-    for (
-        key,
-        label,
-    ) in fields:
-
-        local_value = (
-            metadata.get(
-                key
-            )
+        metric_card(
+            "Fields Checked",
+            str(comparisons),
+            "Shared deployment fields",
         )
 
-        runtime_value = (
-            api_model.get(
-                key
-            )
+    with c2:
+
+        metric_card(
+            "Matches",
+            str(
+                max(
+                    comparisons
+                    - mismatches,
+                    0,
+                )
+            ),
+            "Consistent values",
+            tone="success",
         )
 
-        if (
-            local_value is None
-            and runtime_value is None
-        ):
+    with c3:
 
-            continue
-
-        match = (
-            local_value is not None
-            and runtime_value is not None
-            and str(
-                local_value
-            )
-            == str(
-                runtime_value
-            )
+        metric_card(
+            "Mismatches",
+            str(mismatches),
+            "Deployment discrepancies",
+            tone=(
+                "success"
+                if mismatches == 0
+                else "danger"
+            ),
         )
 
-        comparison_count += 1
-
-        if not match:
-
-            mismatch_count += 1
-
-        rows.append(
-            {
-                "Field":
-                    label,
-
-                "Local Artifact":
-                    (
-                        "—"
-                        if local_value
-                        is None
-                        else str(
-                            local_value
-                        )
-                    ),
-
-                "Runtime API":
-                    (
-                        "—"
-                        if runtime_value
-                        is None
-                        else str(
-                            runtime_value
-                        )
-                    ),
-
-                "Status":
-                    (
-                        "MATCH"
-                        if match
-                        else "MISMATCH"
-                    ),
-            }
-        )
+    st.write("")
 
     if (
-        comparison_count
-        and mismatch_count == 0
+        comparisons > 0
+        and mismatches == 0
     ):
 
         info_panel(
-            "Contracts Consistent",
+            "Deployment Contract Verified",
             (
-                "The core local metadata matches the "
-                "model currently exposed by the API."
+                "The frozen metadata is consistent with "
+                "the model currently exposed by the inference API."
             ),
             tone="success",
         )
 
-    elif comparison_count:
+    elif comparisons > 0:
 
         info_panel(
-            "Contract Mismatch Detected",
+            "Deployment Contract Mismatch",
             (
-                f"{mismatch_count} of {comparison_count} "
-                "checked field(s) differ between local "
-                "metadata and the runtime API."
+                f"{mismatches} of {comparisons} checked fields "
+                "differ. Frozen evaluation results must not be "
+                "attributed to the current runtime model until "
+                "the discrepancy is resolved."
             ),
-            tone="warning",
+            tone="danger",
         )
 
     else:
 
         info_panel(
-            "No Comparable Fields",
+            "Contract Verification Inconclusive",
             (
-                "The current artifacts do not expose enough "
-                "shared fields for comparison."
+                "No shared contract fields are available "
+                "for deployment verification."
             ),
             tone="warning",
         )
@@ -1434,7 +2022,7 @@ def _render_contract_consistency(
 
                     "Local Artifact":
                         st.column_config.TextColumn(
-                            "Local Artifact",
+                            "Frozen Metadata",
                             width="large",
                         ),
 
@@ -1454,53 +2042,54 @@ def _render_contract_consistency(
 
 
 # =============================================================================
-# Frontend analytical assets
+# Artifact coverage
 # =============================================================================
 
 
-def _render_frontend_assets(
-    metadata: dict[str, Any],
-) -> None:
+def _render_artifacts() -> None:
     """
-    Render analytical artifact coverage.
+    Render inference and analytical artifact readiness.
     """
 
     st.write("")
     st.write("")
 
     section_header(
-        "Frontend Analytical Assets",
+        "Model Artifact Registry",
         (
-            "Artifacts available to the dashboard for "
-            "evaluation reporting and explainability."
+            "Availability and traceability of inference, "
+            "governance, explainability and evaluation assets."
         ),
         eyebrow="ARTIFACT COVERAGE",
     )
 
-    metadata_ready = bool(
-        metadata
+    inventory = _artifact_inventory()
+
+    inference = [
+        artifact
+        for artifact in inventory
+        if artifact.required_for_inference
+    ]
+
+    analytical = [
+        artifact
+        for artifact in inventory
+        if not artifact.required_for_inference
+    ]
+
+    inference_available = sum(
+        artifact.available
+        for artifact in inference
     )
 
-    metadata_file_ready = (
-        METADATA_PATH.exists()
-        and METADATA_PATH.is_file()
+    analytical_available = sum(
+        artifact.available
+        for artifact in analytical
     )
 
-    explainability_files = (
-        _count_files(
-            EXPLAINABILITY_DIR
-        )
-    )
-
-    explainability_ready = (
-        explainability_files
-        > 0
-    )
-
-    explainability_size = (
-        _directory_size(
-            EXPLAINABILITY_DIR
-        )
+    total_size = sum(
+        artifact.size_bytes
+        for artifact in inventory
     )
 
     c1, c2, c3, c4 = (
@@ -1510,16 +2099,19 @@ def _render_frontend_assets(
     with c1:
 
         metric_card(
-            "Metadata",
+            "Inference Artifacts",
             (
-                "AVAILABLE"
-                if metadata_ready
-                else "MISSING"
+                f"{inference_available}/"
+                f"{len(inference)}"
             ),
-            "Frozen evaluation contract",
+            "Required for model loading",
             tone=(
                 "success"
-                if metadata_ready
+                if (
+                    inference
+                    and inference_available
+                    == len(inference)
+                )
                 else "danger"
             ),
         )
@@ -1527,30 +2119,31 @@ def _render_frontend_assets(
     with c2:
 
         metric_card(
-            "Explainability",
+            "Analytical Assets",
             (
-                "AVAILABLE"
-                if explainability_ready
-                else "MISSING"
+                f"{analytical_available}/"
+                f"{len(analytical)}"
             ),
-            (
-                f"{explainability_files:,} file(s)"
-            ),
+            "Explainability + evaluation",
             tone=(
                 "success"
-                if explainability_ready
-                else "danger"
+                if (
+                    analytical
+                    and analytical_available
+                    == len(analytical)
+                )
+                else "warning"
             ),
         )
 
     with c3:
 
         metric_card(
-            "Explainability Size",
+            "Tracked Size",
             _format_bytes(
-                explainability_size
+                total_size
             ),
-            "Mounted frontend assets",
+            "Expected artifact inventory",
         )
 
     with c4:
@@ -1559,7 +2152,10 @@ def _render_frontend_assets(
             "Artifacts Root",
             (
                 "READY"
-                if ARTIFACTS_ROOT.exists()
+                if (
+                    ARTIFACTS_ROOT.exists()
+                    and ARTIFACTS_ROOT.is_dir()
+                )
                 else "MISSING"
             ),
             str(
@@ -1572,102 +2168,103 @@ def _render_frontend_assets(
             ),
         )
 
+    rows = []
+
+    for artifact in inventory:
+
+        rows.append(
+            {
+                "Category":
+                    artifact.category,
+
+                "Artifact":
+                    artifact.name,
+
+                "Required":
+                    (
+                        "YES"
+                        if artifact.required_for_inference
+                        else "NO"
+                    ),
+
+                "Status":
+                    (
+                        "AVAILABLE"
+                        if artifact.available
+                        else "MISSING"
+                    ),
+
+                "Size":
+                    (
+                        _format_bytes(
+                            artifact.size_bytes
+                        )
+                        if artifact.available
+                        else "—"
+                    ),
+
+                "Location":
+                    str(
+                        artifact.path
+                    ),
+            }
+        )
+
     st.write("")
 
-    status_rows = [
-        {
-            "Component":
-                "Model Metadata",
+    with st.expander(
+        "Artifact inventory",
+        expanded=False,
+    ):
 
-            "Owner":
-                "Frontend",
+        st.dataframe(
+            pd.DataFrame(
+                rows
+            ),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Category":
+                    st.column_config.TextColumn(
+                        "Category",
+                        width="medium",
+                    ),
 
-            "Status":
-                (
-                    "AVAILABLE"
-                    if metadata_file_ready
-                    else "MISSING"
-                ),
+                "Artifact":
+                    st.column_config.TextColumn(
+                        "Artifact",
+                        width="large",
+                    ),
 
-            "Files":
-                (
-                    1
-                    if metadata_file_ready
-                    else 0
-                ),
+                "Required":
+                    st.column_config.TextColumn(
+                        "Inference Required",
+                        width="small",
+                    ),
 
-            "Location":
-                str(
-                    METADATA_PATH
-                ),
-        },
-        {
-            "Component":
-                "Explainability",
+                "Status":
+                    st.column_config.TextColumn(
+                        "Status",
+                        width="small",
+                    ),
 
-            "Owner":
-                "Frontend",
+                "Size":
+                    st.column_config.TextColumn(
+                        "Size",
+                        width="small",
+                    ),
 
-            "Status":
-                (
-                    "AVAILABLE"
-                    if explainability_ready
-                    else "MISSING"
-                ),
-
-            "Files":
-                explainability_files,
-
-            "Location":
-                str(
-                    EXPLAINABILITY_DIR
-                ),
-        },
-    ]
-
-    st.dataframe(
-        pd.DataFrame(
-            status_rows
-        ),
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Component":
-                st.column_config.TextColumn(
-                    "Component",
-                    width="medium",
-                ),
-
-            "Owner":
-                st.column_config.TextColumn(
-                    "Owner",
-                    width="small",
-                ),
-
-            "Status":
-                st.column_config.TextColumn(
-                    "Status",
-                    width="small",
-                ),
-
-            "Files":
-                st.column_config.NumberColumn(
-                    "Files",
-                    format="%d",
-                    width="small",
-                ),
-
-            "Location":
-                st.column_config.TextColumn(
-                    "Location",
-                    width="large",
-                ),
-        },
-    )
+                "Location":
+                    st.column_config.TextColumn(
+                        "Location",
+                        width="large",
+                    ),
+            },
+        )
 
 
 # =============================================================================
-# Architecture readiness
+# Architecture
 # =============================================================================
 
 
@@ -1685,11 +2282,13 @@ def _render_architecture(
     section_header(
         "System Architecture",
         (
-            "Readiness of the principal application "
-            "layers and their operational responsibilities."
+            "Operational readiness of the complete "
+            "fraud-risk decision-support stack."
         ),
         eyebrow="STACK READINESS",
     )
+
+    frontend_ready = True
 
     api_ready = bool(
         diagnostics.get(
@@ -1703,67 +2302,64 @@ def _render_architecture(
         )
     )
 
-    metadata_ready = bool(
-        metadata
+    explainability_ready = (
+        _runtime_explainability_ready(
+            diagnostics
+        )
     )
 
-    explainability_ready = (
-        _count_files(
-            EXPLAINABILITY_DIR
+    analytics_ready = (
+        _analytics_ready(
+            metadata
         )
-        > 0
     )
 
     stages = [
         (
             "01",
             "Frontend",
-            True,
-            "Streamlit investigation console",
+            frontend_ready,
+            "Streamlit analyst workspace",
         ),
         (
             "02",
             "API",
             api_ready,
-            "FastAPI inference service",
+            "FastAPI inference gateway",
         ),
         (
             "03",
             "Model",
             model_ready,
-            "Frozen fraud-risk estimator",
+            "Frozen XGBoost scoring stack",
         ),
         (
             "04",
+            "TreeSHAP",
+            explainability_ready,
+            "Claim-level explainability",
+        ),
+        (
+            "05",
             "Analytics",
-            (
-                metadata_ready
-                and explainability_ready
-            ),
-            "Evaluation and explainability assets",
+            analytics_ready,
+            "Evaluation and governance evidence",
         ),
     ]
 
-    columns = (
-        st.columns(
-            4
-        )
+    columns = st.columns(
+        len(stages)
     )
 
-    for (
-        column,
-        stage,
+    for column, (
+        number,
+        name,
+        ready,
+        description,
     ) in zip(
         columns,
         stages,
     ):
-
-        (
-            number,
-            name,
-            ready,
-            description,
-        ) = stage
 
         with column:
 
@@ -1786,57 +2382,26 @@ def _render_architecture(
                 )
             )
 
-    operational_ready = (
-        api_ready
-        and model_ready
-    )
-
-    analytical_ready = (
-        metadata_ready
-        and explainability_ready
-    )
-
     st.write("")
 
-    if (
-        operational_ready
-        and analytical_ready
-    ):
+    (
+        status,
+        tone,
+        description,
+    ) = _system_status(
+        diagnostics,
+        metadata,
+    )
 
-        info_panel(
-            "Complete Application Stack Ready",
-            (
-                "Frontend, API, model and analytical "
-                "assets are all available."
-            ),
-            tone="success",
-        )
-
-    elif operational_ready:
-
-        info_panel(
-            "Inference Ready — Analytics Degraded",
-            (
-                "Live scoring is operational, but one or more "
-                "analytical dashboard assets are unavailable."
-            ),
-            tone="warning",
-        )
-
-    else:
-
-        info_panel(
-            "Inference Stack Not Ready",
-            (
-                "The application cannot currently guarantee "
-                "end-to-end fraud-risk inference."
-            ),
-            tone="danger",
-        )
+    info_panel(
+        f"Stack Status — {status}",
+        description,
+        tone=tone,
+    )
 
 
 # =============================================================================
-# Runtime
+# Runtime environment
 # =============================================================================
 
 
@@ -1844,7 +2409,7 @@ def _render_runtime(
     diagnostics: dict[str, Any],
 ) -> None:
     """
-    Render technical frontend/runtime information.
+    Render technical frontend runtime information.
     """
 
     st.write("")
@@ -1854,16 +2419,22 @@ def _render_runtime(
         "Runtime Environment",
         (
             "Technical context of the current "
-            "Streamlit frontend process."
+            "Streamlit application process."
         ),
         eyebrow="ENVIRONMENT",
     )
 
-    api_url = (
+    api_url = os.getenv(
+        "FRAUD_API_URL",
+        "http://127.0.0.1:8000",
+    )
+
+    runtime_environment = os.getenv(
+        "APP_ENV",
         os.getenv(
-            "FRAUD_API_URL",
-            "http://127.0.0.1:8000",
-        )
+            "ENVIRONMENT",
+            "development",
+        ),
     )
 
     c1, c2, c3, c4 = (
@@ -1897,49 +2468,54 @@ def _render_runtime(
     with c4:
 
         metric_card(
-            "Process ID",
-            str(
-                os.getpid()
-            ),
-            "Frontend process",
+            "Environment",
+            runtime_environment,
+            "Application environment",
+            tone="info",
         )
 
     st.write("")
 
-    c1, c2 = (
-        st.columns(2)
+    c1, c2, c3 = (
+        st.columns(3)
     )
 
     with c1:
 
-        metric_card(
-            "Health Request",
-            (
-                f"{diagnostics['health_latency_ms']:.1f} ms"
-                if diagnostics.get(
+        mini_metric(
+            "Health Latency",
+            _format_latency(
+                diagnostics.get(
                     "health_latency_ms"
                 )
-                is not None
-                else "—"
             ),
-            "API diagnostic latency",
+            helper="GET /health",
             tone="info",
         )
 
     with c2:
 
-        metric_card(
-            "Model Contract Request",
-            (
-                f"{diagnostics['model_info_latency_ms']:.1f} ms"
-                if diagnostics.get(
+        mini_metric(
+            "Contract Latency",
+            _format_latency(
+                diagnostics.get(
                     "model_info_latency_ms"
                 )
-                is not None
-                else "—"
             ),
-            "API contract latency",
+            helper="GET /model-info",
             tone="info",
+        )
+
+    with c3:
+
+        mini_metric(
+            "Total Diagnostic",
+            _format_latency(
+                diagnostics.get(
+                    "total_latency_ms"
+                )
+            ),
+            helper="Sequential diagnostic",
         )
 
     st.write("")
@@ -1952,34 +2528,49 @@ def _render_runtime(
             "### Runtime Configuration"
         )
 
-        st.caption(
-            "FRAUD API"
-        )
-
-        st.code(
+        key_value_row(
+            "Fraud API",
             api_url,
-            language=None,
+            monospace=True,
         )
 
-        st.caption(
-            "ARTIFACTS ROOT"
-        )
-
-        st.code(
+        key_value_row(
+            "Artifacts root",
             str(
                 ARTIFACTS_ROOT
             ),
-            language=None,
+            monospace=True,
         )
 
-        st.caption(
-            "PYTHON EXECUTABLE"
+        key_value_row(
+            "Artifacts root status",
+            _path_status(
+                ARTIFACTS_ROOT
+            ),
         )
 
-        st.code(
+        key_value_row(
+            "Python executable",
             sys.executable,
-            language=None,
+            monospace=True,
         )
+
+        key_value_row(
+            "Process ID",
+            str(
+                os.getpid()
+            ),
+        )
+
+        key_value_row(
+            "Working directory",
+            str(
+                Path.cwd()
+            ),
+            monospace=True,
+        )
+
+        st.write("")
 
         st.caption(
             (
@@ -1999,7 +2590,7 @@ def _render_diagnostics(
     metadata: dict[str, Any],
 ) -> None:
     """
-    Render raw technical payloads for debugging.
+    Render low-level contracts and diagnostic state.
     """
 
     st.write("")
@@ -2008,97 +2599,178 @@ def _render_diagnostics(
     section_header(
         "Technical Diagnostics",
         (
-            "Raw runtime contracts for verification "
-            "and troubleshooting."
+            "Raw runtime contracts and diagnostic state "
+            "for verification and troubleshooting."
         ),
         eyebrow="DEBUG VIEW",
     )
 
-    health_tab, model_tab, metadata_tab, summary_tab = (
-        st.tabs(
-            [
-                "Health",
-                "Model Contract",
-                "Metadata",
-                "Diagnostic Summary",
-            ]
-        )
+    (
+        health_tab,
+        model_tab,
+        metadata_tab,
+        artifacts_tab,
+        summary_tab,
+    ) = st.tabs(
+        [
+            "Health",
+            "Model Contract",
+            "Metadata",
+            "Artifacts",
+            "Diagnostic Summary",
+        ]
     )
+
+    # -------------------------------------------------------------------------
+    # Health
+    # -------------------------------------------------------------------------
 
     with health_tab:
 
-        payload = (
+        health = _nonempty_dict(
             diagnostics.get(
                 "health"
             )
         )
 
-        if payload:
-
+        if health:
             st.json(
-                payload
+                health
             )
 
         else:
-
             info_panel(
                 "Health Payload Unavailable",
                 (
-                    "No health payload was returned "
+                    "No valid health payload was returned "
                     "by the inference API."
                 ),
                 tone="warning",
             )
 
+    # -------------------------------------------------------------------------
+    # Model
+    # -------------------------------------------------------------------------
+
     with model_tab:
 
-        payload = (
+        model = _nonempty_dict(
             diagnostics.get(
                 "model"
             )
         )
 
-        if payload:
-
+        if model:
             st.json(
-                payload
+                model
             )
 
         else:
-
             info_panel(
                 "Model Contract Unavailable",
                 (
-                    "No model-info payload was returned "
-                    "by the inference API."
+                    "No valid model-info payload was "
+                    "returned by the inference API."
                 ),
                 tone="warning",
             )
 
+    # -------------------------------------------------------------------------
+    # Metadata
+    # -------------------------------------------------------------------------
+
     with metadata_tab:
 
         if metadata:
-
             st.json(
                 metadata
             )
 
         else:
-
             info_panel(
-                "Frontend Metadata Unavailable",
+                "Frozen Metadata Unavailable",
                 (
-                    "The frozen metadata artifact could not "
-                    "be loaded from the frontend runtime."
+                    "The local model metadata artifact "
+                    "could not be loaded."
                 ),
                 tone="warning",
             )
 
+    # -------------------------------------------------------------------------
+    # Artifacts
+    # -------------------------------------------------------------------------
+
+    with artifacts_tab:
+
+        inventory = _artifact_inventory()
+
+        payload = [
+            {
+                "name":
+                    artifact.name,
+
+                "category":
+                    artifact.category,
+
+                "required_for_inference":
+                    artifact.required_for_inference,
+
+                "available":
+                    artifact.available,
+
+                "size_bytes":
+                    artifact.size_bytes,
+
+                "path":
+                    str(
+                        artifact.path
+                    ),
+            }
+            for artifact in inventory
+        ]
+
+        st.json(
+            payload
+        )
+
+    # -------------------------------------------------------------------------
+    # Summary
+    # -------------------------------------------------------------------------
+
     with summary_tab:
+
+        (
+            status,
+            _,
+            status_description,
+        ) = _system_status(
+            diagnostics,
+            metadata,
+        )
+
+        (
+            analytical_available,
+            analytical_total,
+        ) = _analytics_coverage()
+
+        (
+            contract_rows,
+            contract_checks,
+            contract_mismatches,
+        ) = _contract_comparison(
+            diagnostics,
+            metadata,
+        )
 
         summary = {
             "generated_at":
                 _utc_now(),
+
+            "system_status":
+                status,
+
+            "system_status_description":
+                status_description,
 
             "api_online":
                 bool(
@@ -2114,6 +2786,11 @@ def _render_diagnostics(
                     )
                 ),
 
+            "semantic_health_ok":
+                _health_reports_ready(
+                    diagnostics
+                ),
+
             "model_info_endpoint_ok":
                 bool(
                     diagnostics.get(
@@ -2121,14 +2798,41 @@ def _render_diagnostics(
                     )
                 ),
 
-            "model_ready":
+            "inference_ready":
                 _api_model_ready(
                     diagnostics
                 ),
 
+            "runtime_explainability_ready":
+                _runtime_explainability_ready(
+                    diagnostics
+                ),
+
+            "local_inference_artifacts_ready":
+                _inference_artifacts_ready(),
+
             "analytics_ready":
                 _analytics_ready(
                     metadata
+                ),
+
+            "analytical_artifacts_available":
+                analytical_available,
+
+            "analytical_artifacts_expected":
+                analytical_total,
+
+            "contract_checks":
+                contract_checks,
+
+            "contract_mismatches":
+                contract_mismatches,
+
+            "contract_consistent":
+                (
+                    contract_mismatches == 0
+                    if contract_checks > 0
+                    else None
                 ),
 
             "health_latency_ms":
@@ -2151,19 +2855,6 @@ def _render_diagnostics(
                     METADATA_PATH
                 ),
 
-            "metadata_available":
-                METADATA_PATH.exists(),
-
-            "explainability_directory":
-                str(
-                    EXPLAINABILITY_DIR
-                ),
-
-            "explainability_file_count":
-                _count_files(
-                    EXPLAINABILITY_DIR
-                ),
-
             "artifacts_root":
                 str(
                     ARTIFACTS_ROOT
@@ -2174,6 +2865,9 @@ def _render_diagnostics(
                     "FRAUD_API_URL",
                     "http://127.0.0.1:8000",
                 ),
+
+            "contract_comparison":
+                contract_rows,
         }
 
         st.json(
@@ -2182,7 +2876,7 @@ def _render_diagnostics(
 
 
 # =============================================================================
-# Main
+# Main page
 # =============================================================================
 
 
@@ -2190,37 +2884,35 @@ def render(
     client,
 ) -> None:
     """
-    Render complete runtime / readiness dashboard.
+    Render the complete operational status and deployment
+    verification workspace.
     """
 
     section_header(
         "System Status",
         (
-            "Operational readiness, API health, model contract, "
-            "deployment consistency and analytical asset availability."
+            "Operational readiness, inference health, model "
+            "contract verification, explainability availability "
+            "and analytical artifact traceability."
         ),
     )
 
     # -------------------------------------------------------------------------
-    # Diagnostics are evaluated once per page render.
+    # Evaluate runtime state exactly once per Streamlit render.
     # -------------------------------------------------------------------------
 
-    diagnostics = (
-        _check_api(
-            client
-        )
+    diagnostics = _check_api(
+        client
     )
 
-    metadata = (
-        _read_metadata(
-            str(
-                METADATA_PATH
-            )
+    metadata = _read_metadata(
+        str(
+            METADATA_PATH
         )
     )
 
     # -------------------------------------------------------------------------
-    # Runtime health
+    # 1. Operational health
     # -------------------------------------------------------------------------
 
     _render_service_health(
@@ -2229,7 +2921,7 @@ def render(
     )
 
     # -------------------------------------------------------------------------
-    # Model contract
+    # 2. Deployed model
     # -------------------------------------------------------------------------
 
     _render_model_contract(
@@ -2238,7 +2930,7 @@ def render(
     )
 
     # -------------------------------------------------------------------------
-    # Runtime ↔ artifact verification
+    # 3. Deployment verification
     # -------------------------------------------------------------------------
 
     _render_contract_consistency(
@@ -2247,15 +2939,13 @@ def render(
     )
 
     # -------------------------------------------------------------------------
-    # Analytical artifacts
+    # 4. Artifact registry
     # -------------------------------------------------------------------------
 
-    _render_frontend_assets(
-        metadata
-    )
+    _render_artifacts()
 
     # -------------------------------------------------------------------------
-    # Architecture
+    # 5. Stack readiness
     # -------------------------------------------------------------------------
 
     _render_architecture(
@@ -2264,7 +2954,7 @@ def render(
     )
 
     # -------------------------------------------------------------------------
-    # Runtime environment
+    # 6. Runtime environment
     # -------------------------------------------------------------------------
 
     _render_runtime(
@@ -2272,7 +2962,7 @@ def render(
     )
 
     # -------------------------------------------------------------------------
-    # Raw diagnostics
+    # 7. Low-level diagnostics
     # -------------------------------------------------------------------------
 
     _render_diagnostics(

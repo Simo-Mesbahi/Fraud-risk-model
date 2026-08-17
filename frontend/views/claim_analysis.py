@@ -41,6 +41,8 @@ from utils.formatting import (
 
 
 MAX_CONTEXT_ROWS = 100_000
+MAX_VISIBLE_SHAP_DRIVERS = 6
+MAX_TECHNICAL_SHAP_ROWS = 107
 
 
 LEAKAGE_COLUMNS = {
@@ -85,6 +87,62 @@ SMART_WIDGET_KEYS = {
 }
 
 
+PREDICTION_STATE_KEYS = {
+    "single_prediction",
+    "single_score",
+    "single_claim",
+    "single_source",
+    "single_explanation",
+}
+
+
+FEATURE_LABELS = {
+    "service_units": "Service units",
+    "claim_amount": "Claim amount",
+    "requested_reimbursement": "Requested reimbursement",
+    "coverage_limit": "Coverage limit",
+    "document_count": "Document count",
+    "customer_age": "Customer age",
+    "customer_tenure_months": "Customer tenure",
+    "policy_tenure_months": "Policy tenure",
+    "days_since_policy_change": "Days since policy change",
+    "provider_tenure_months": "Provider tenure",
+    "days_service_to_submission": "Service-to-submission delay",
+    "reimbursement_ratio": "Reimbursement ratio",
+    "customer_claims_7d": "Customer claims — 7 days",
+    "customer_claims_30d": "Customer claims — 30 days",
+    "customer_claims_90d": "Customer claims — 90 days",
+    "customer_claims_365d": "Customer claims — 365 days",
+    "customer_amount_30d": "Customer amount — 30 days",
+    "customer_amount_365d": "Customer amount — 365 days",
+    "customer_avg_claim_amount_365d": "Customer average claim amount",
+    "days_since_customer_previous_claim": "Time since previous customer claim",
+    "days_since_same_provider_claim": "Time since same-provider claim",
+    "customer_provider_claims_30d": "Customer-provider claims — 30 days",
+    "same_service_claims_30d": "Same-service claims — 30 days",
+    "provider_claims_30d": "Provider claims — 30 days",
+    "provider_claims_90d": "Provider claims — 90 days",
+    "provider_avg_claim_amount_90d": "Provider average claim amount",
+    "service_typical_amount": "Typical service amount",
+    "claim_to_service_median_ratio": "Claim vs service benchmark",
+    "claim_to_customer_avg_ratio": "Claim vs customer average",
+    "claim_to_provider_avg_ratio": "Claim vs provider average",
+    "submission_hour": "Submission hour",
+    "submission_dayofweek": "Submission day of week",
+    "submission_month": "Submission month",
+    "service_dayofweek": "Service day of week",
+    "service_month": "Service month",
+    "requested_to_limit_ratio": "Requested vs coverage limit",
+    "amount_above_service_typical": "Amount above service benchmark",
+    "recent_claim_share_30d_365d": "Recent customer claim concentration",
+    "recent_amount_share_30d_365d": "Recent customer amount concentration",
+    "provider_recent_activity_ratio": "Provider recent activity",
+    "customer_provider_intensity": "Customer-provider interaction intensity",
+    "same_service_intensity": "Repeated-service intensity",
+    "has_invoice": "Invoice attached",
+}
+
+
 # =============================================================================
 # Generic helpers
 # =============================================================================
@@ -99,13 +157,9 @@ def _safe_float(
     """
 
     try:
-        result = float(
-            value
-        )
+        result = float(value)
 
-        if np.isfinite(
-            result
-        ):
+        if np.isfinite(result):
             return result
 
     except (
@@ -114,9 +168,7 @@ def _safe_float(
     ):
         pass
 
-    return float(
-        default
-    )
+    return float(default)
 
 
 def _safe_int(
@@ -128,17 +180,12 @@ def _safe_int(
     """
 
     try:
-
-        if pd.isna(
-            value
-        ):
+        if pd.isna(value):
             return default
 
         return int(
             round(
-                float(
-                    value
-                )
+                float(value)
             )
         )
 
@@ -157,19 +204,12 @@ def _safe_optional_float(
     """
 
     try:
-
-        if pd.isna(
-            value
-        ):
+        if pd.isna(value):
             return None
 
-        result = float(
-            value
-        )
+        result = float(value)
 
-        if np.isfinite(
-            result
-        ):
+        if np.isfinite(result):
             return result
 
     except (
@@ -193,10 +233,7 @@ def _safe_bool(
         return default
 
     try:
-
-        if pd.isna(
-            value
-        ):
+        if pd.isna(value):
             return default
 
     except (
@@ -209,7 +246,6 @@ def _safe_bool(
         value,
         str,
     ):
-
         return (
             value
             .strip()
@@ -222,9 +258,7 @@ def _safe_bool(
             }
         )
 
-    return bool(
-        value
-    )
+    return bool(value)
 
 
 def _json_safe(
@@ -247,11 +281,30 @@ def _json_safe(
     ):
         return value.isoformat()
 
-    try:
+    if isinstance(
+        value,
+        dict,
+    ):
+        return {
+            str(key): _json_safe(item)
+            for key, item in value.items()
+        }
 
-        if pd.isna(
-            value
-        ):
+    if isinstance(
+        value,
+        (
+            list,
+            tuple,
+            set,
+        ),
+    ):
+        return [
+            _json_safe(item)
+            for item in value
+        ]
+
+    try:
+        if pd.isna(value):
             return None
 
     except (
@@ -264,9 +317,10 @@ def _json_safe(
         value,
         "item",
     ):
-
         try:
-            return value.item()
+            return _json_safe(
+                value.item()
+            )
 
         except Exception:
             pass
@@ -295,16 +349,8 @@ def _strip_leakage(
     """
 
     return {
-        key:
-            _json_safe(
-                value
-            )
-
-        for (
-            key,
-            value,
-        ) in claim.items()
-
+        key: _json_safe(value)
+        for key, value in claim.items()
         if key not in LEAKAGE_COLUMNS
     }
 
@@ -319,15 +365,116 @@ def _format_identifier(
     if value is None:
         return "—"
 
-    value = str(
-        value
-    ).strip()
+    value = str(value).strip()
 
     return (
         value
         if value
         else "—"
     )
+
+
+def _humanize_feature_name(
+    feature_name: Any,
+) -> str:
+    """
+    Convert transformed model feature names into analyst-friendly labels.
+    """
+
+    if feature_name is None:
+        return "Unknown feature"
+
+    name = str(feature_name).strip()
+
+    if not name:
+        return "Unknown feature"
+
+    if name in FEATURE_LABELS:
+        return FEATURE_LABELS[name]
+
+    categorical_prefixes = {
+        "service_category_": "Service category",
+        "service_code_": "Service",
+        "submission_channel_": "Submission channel",
+        "coverage_level_": "Coverage level",
+        "provider_type_": "Provider type",
+        "provider_region_": "Provider region",
+        "has_prescription_": "Prescription",
+    }
+
+    for prefix, label in categorical_prefixes.items():
+
+        if name.startswith(prefix):
+
+            value = (
+                name[len(prefix):]
+                .replace("_", " ")
+                .strip()
+            )
+
+            value = (
+                value.title()
+                if value
+                else "Unknown"
+            )
+
+            return (
+                f"{label}: {value}"
+            )
+
+    return (
+        name
+        .replace("_", " ")
+        .strip()
+        .title()
+    )
+
+
+def _format_feature_value(
+    value: Any,
+) -> str:
+    """
+    Format model feature values safely for business display.
+    """
+
+    if value is None:
+        return "—"
+
+    if isinstance(
+        value,
+        bool,
+    ):
+        return (
+            "Yes"
+            if value
+            else "No"
+        )
+
+    if isinstance(
+        value,
+        str,
+    ):
+        return value
+
+    try:
+        numeric = float(value)
+
+        if not np.isfinite(numeric):
+            return "—"
+
+        if numeric.is_integer():
+            return f"{int(numeric):,}"
+
+        if abs(numeric) >= 1000:
+            return f"{numeric:,.2f}"
+
+        return f"{numeric:.4f}".rstrip("0").rstrip(".")
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return str(value)
 
 
 # =============================================================================
@@ -351,30 +498,21 @@ def _load_context_data() -> pd.DataFrame:
     )
 
     if frame.empty:
-
         raise ValueError(
-            (
-                "No historical claim context "
-                "is available."
-            )
+            "No historical claim context is available."
         )
 
     missing = (
         REQUIRED_CONTEXT_COLUMNS
-        - set(
-            frame.columns
-        )
+        - set(frame.columns)
     )
 
     if missing:
-
         raise ValueError(
             (
                 "Historical dataset is missing: "
                 + ", ".join(
-                    sorted(
-                        missing
-                    )
+                    sorted(missing)
                 )
             )
         )
@@ -388,17 +526,12 @@ def _load_context_data() -> pd.DataFrame:
         errors="coerce",
     )
 
-    if (
-        "service_date"
-        in frame.columns
-    ):
+    if "service_date" in frame.columns:
 
         frame[
             "service_date"
         ] = pd.to_datetime(
-            frame[
-                "service_date"
-            ],
+            frame["service_date"],
             errors="coerce",
         )
 
@@ -418,7 +551,6 @@ def _load_context_data() -> pd.DataFrame:
     )
 
     if frame.empty:
-
         raise ValueError(
             (
                 "Historical context contains no "
@@ -508,11 +640,7 @@ def _window(
         )
     )
 
-    return (
-        frame.loc[
-            mask
-        ]
-    )
+    return frame.loc[mask]
 
 
 def _amount_values(
@@ -527,16 +655,13 @@ def _amount_values(
         or "claim_amount"
         not in frame.columns
     ):
-
         return pd.Series(
             dtype=float
         )
 
     return (
         pd.to_numeric(
-            frame[
-                "claim_amount"
-            ],
+            frame["claim_amount"],
             errors="coerce",
         )
         .dropna()
@@ -550,11 +675,7 @@ def _amount_sum(
     Sum claim amounts safely.
     """
 
-    values = (
-        _amount_values(
-            frame
-        )
-    )
+    values = _amount_values(frame)
 
     if values.empty:
         return 0.0
@@ -572,16 +693,10 @@ def _amount_mean(
     Compute historical mean amount with safe fallback.
     """
 
-    values = (
-        _amount_values(
-            frame
-        )
-    )
+    values = _amount_values(frame)
 
     if values.empty:
-        return float(
-            default
-        )
+        return float(default)
 
     return float(
         values.mean()
@@ -596,16 +711,10 @@ def _amount_median(
     Compute historical median amount with safe fallback.
     """
 
-    values = (
-        _amount_values(
-            frame
-        )
-    )
+    values = _amount_values(frame)
 
     if values.empty:
-        return float(
-            default
-        )
+        return float(default)
 
     return float(
         values.median()
@@ -632,8 +741,7 @@ def _days_since_last(
 
     dates = (
         dates[
-            dates
-            < timestamp
+            dates < timestamp
         ]
     )
 
@@ -676,9 +784,7 @@ def _service_reference(
                 "service_code"
             ]
             .astype(str)
-            == str(
-                service_code
-            )
+            == str(service_code)
         ]
         .copy()
     )
@@ -706,22 +812,17 @@ def _service_reference(
         )
 
         if not requested.empty:
-
-            typical_requested = (
-                float(
-                    requested.median()
-                )
+            typical_requested = float(
+                requested.median()
             )
 
         else:
-
             typical_requested = (
                 typical_amount
                 * 0.8
             )
 
     else:
-
         typical_requested = (
             typical_amount
             * 0.8
@@ -767,23 +868,18 @@ def _build_smart_claim(
     Only information available before submission_datetime is used.
     """
 
-    submission_ts = (
-        pd.Timestamp(
-            submission_datetime
-        )
+    submission_ts = pd.Timestamp(
+        submission_datetime
     )
 
-    service_ts = (
-        pd.Timestamp(
-            service_date
-        )
+    service_ts = pd.Timestamp(
+        service_date
     )
 
     if (
         service_ts.normalize()
         > submission_ts.normalize()
     ):
-
         raise ValueError(
             (
                 "Service date cannot occur after "
@@ -792,13 +888,11 @@ def _build_smart_claim(
         )
 
     if claim_amount <= 0:
-
         raise ValueError(
             "Claim amount must be positive."
         )
 
     if requested_reimbursement < 0:
-
         raise ValueError(
             (
                 "Requested reimbursement "
@@ -806,11 +900,9 @@ def _build_smart_claim(
             )
         )
 
-    historical = (
-        _history_before(
-            history,
-            submission_ts,
-        )
+    historical = _history_before(
+        history,
+        submission_ts,
     )
 
     customer_history = (
@@ -819,9 +911,7 @@ def _build_smart_claim(
                 "customer_id"
             ]
             .astype(str)
-            == str(
-                customer_id
-            )
+            == str(customer_id)
         ]
         .copy()
     )
@@ -832,9 +922,7 @@ def _build_smart_claim(
                 "provider_id"
             ]
             .astype(str)
-            == str(
-                provider_id
-            )
+            == str(provider_id)
         ]
         .copy()
     )
@@ -845,9 +933,7 @@ def _build_smart_claim(
                 "provider_id"
             ]
             .astype(str)
-            == str(
-                provider_id
-            )
+            == str(provider_id)
         ]
         .copy()
     )
@@ -858,9 +944,7 @@ def _build_smart_claim(
                 "service_code"
             ]
             .astype(str)
-            == str(
-                service_code
-            )
+            == str(service_code)
         ]
         .copy()
     )
@@ -871,27 +955,20 @@ def _build_smart_claim(
                 "service_code"
             ]
             .astype(str)
-            == str(
-                service_code
-            )
+            == str(service_code)
         ]
         .copy()
     )
 
-    customer_latest = (
-        _latest_row(
-            customer_history
-        )
+    customer_latest = _latest_row(
+        customer_history
     )
 
-    provider_latest = (
-        _latest_row(
-            provider_history
-        )
+    provider_latest = _latest_row(
+        provider_history
     )
 
     if customer_latest is None:
-
         raise ValueError(
             (
                 "No historical context exists for "
@@ -901,7 +978,6 @@ def _build_smart_claim(
         )
 
     if provider_latest is None:
-
         raise ValueError(
             (
                 "No historical context exists for "
@@ -914,68 +990,52 @@ def _build_smart_claim(
     # Historical windows
     # -------------------------------------------------------------------------
 
-    customer_7d = (
-        _window(
-            customer_history,
-            submission_ts,
-            7,
-        )
+    customer_7d = _window(
+        customer_history,
+        submission_ts,
+        7,
     )
 
-    customer_30d = (
-        _window(
-            customer_history,
-            submission_ts,
-            30,
-        )
+    customer_30d = _window(
+        customer_history,
+        submission_ts,
+        30,
     )
 
-    customer_90d = (
-        _window(
-            customer_history,
-            submission_ts,
-            90,
-        )
+    customer_90d = _window(
+        customer_history,
+        submission_ts,
+        90,
     )
 
-    customer_365d = (
-        _window(
-            customer_history,
-            submission_ts,
-            365,
-        )
+    customer_365d = _window(
+        customer_history,
+        submission_ts,
+        365,
     )
 
-    provider_30d = (
-        _window(
-            provider_history,
-            submission_ts,
-            30,
-        )
+    provider_30d = _window(
+        provider_history,
+        submission_ts,
+        30,
     )
 
-    provider_90d = (
-        _window(
-            provider_history,
-            submission_ts,
-            90,
-        )
+    provider_90d = _window(
+        provider_history,
+        submission_ts,
+        90,
     )
 
-    relationship_30d = (
-        _window(
-            relationship_history,
-            submission_ts,
-            30,
-        )
+    relationship_30d = _window(
+        relationship_history,
+        submission_ts,
+        30,
     )
 
-    same_service_30d = (
-        _window(
-            same_service_history,
-            submission_ts,
-            30,
-        )
+    same_service_30d = _window(
+        same_service_history,
+        submission_ts,
+        30,
     )
 
     # -------------------------------------------------------------------------
@@ -1017,11 +1077,9 @@ def _build_smart_claim(
         )
     )
 
-    coverage_limit = (
-        max(
-            coverage_limit,
-            eps,
-        )
+    coverage_limit = max(
+        coverage_limit,
+        eps,
     )
 
     days_since_policy_change = (
@@ -1041,9 +1099,7 @@ def _build_smart_claim(
             _new_claim_id(),
 
         "customer_id":
-            str(
-                customer_id
-            ),
+            str(customer_id),
 
         "policy_id":
             _json_safe(
@@ -1053,24 +1109,16 @@ def _build_smart_claim(
             ),
 
         "provider_id":
-            str(
-                provider_id
-            ),
+            str(provider_id),
 
         "service_category":
-            str(
-                service_category
-            ),
+            str(service_category),
 
         "service_code":
-            str(
-                service_code
-            ),
+            str(service_code),
 
         "service_units":
-            int(
-                service_units
-            ),
+            int(service_units),
 
         "service_date":
             service_date.isoformat(),
@@ -1084,35 +1132,23 @@ def _build_smart_claim(
             submission_datetime.isoformat(),
 
         "claim_amount":
-            float(
-                claim_amount
-            ),
+            float(claim_amount),
 
         "requested_reimbursement":
-            float(
-                requested_reimbursement
-            ),
+            float(requested_reimbursement),
 
         "coverage_limit":
-            float(
-                coverage_limit
-            ),
+            float(coverage_limit),
 
         "submission_channel":
-            str(
-                submission_channel
-            ),
+            str(submission_channel),
 
         "document_count":
-            int(
-                document_count
-            ),
+            int(document_count),
 
         "has_invoice":
             int(
-                bool(
-                    has_invoice
-                )
+                bool(has_invoice)
             ),
 
         "has_prescription":
@@ -1204,24 +1240,16 @@ def _build_smart_claim(
         # ---------------------------------------------------------------------
 
         "customer_claims_7d":
-            len(
-                customer_7d
-            ),
+            len(customer_7d),
 
         "customer_claims_30d":
-            len(
-                customer_30d
-            ),
+            len(customer_30d),
 
         "customer_claims_90d":
-            len(
-                customer_90d
-            ),
+            len(customer_90d),
 
         "customer_claims_365d":
-            len(
-                customer_365d
-            ),
+            len(customer_365d),
 
         "customer_amount_30d":
             _amount_sum(
@@ -1267,14 +1295,10 @@ def _build_smart_claim(
         # ---------------------------------------------------------------------
 
         "provider_claims_30d":
-            len(
-                provider_30d
-            ),
+            len(provider_30d),
 
         "provider_claims_90d":
-            len(
-                provider_90d
-            ),
+            len(provider_90d),
 
         "provider_avg_claim_amount_90d":
             provider_avg_amount,
@@ -1314,38 +1338,63 @@ def _build_smart_claim(
             ),
     }
 
-    return (
-        _strip_leakage(
-            claim
-        )
+    return _strip_leakage(
+        claim
     )
 
 
 # =============================================================================
-# Prediction state
+# Prediction / explanation state
 # =============================================================================
+
+
+def _extract_explanation_payload(
+    response: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """
+    Normalize supported API explanation envelopes.
+
+    The API client may return either the explanation object directly
+    or an envelope containing it under ``explanation``.
+    """
+
+    if not isinstance(
+        response,
+        dict,
+    ):
+        return None
+
+    explanation = response.get(
+        "explanation"
+    )
+
+    if isinstance(
+        explanation,
+        dict,
+    ):
+        return explanation
+
+    return response
 
 
 def save_prediction(
     claim: dict[str, Any],
     response: dict[str, Any],
     source: str,
+    explanation_response: dict[str, Any] | None = None,
 ) -> None:
     """
-    Validate and persist one model prediction.
+    Validate and persist one model prediction and optional explanation.
     """
 
-    prediction = (
-        response.get(
-            "prediction"
-        )
+    prediction = response.get(
+        "prediction"
     )
 
     if not isinstance(
         prediction,
         dict,
     ):
-
         raise ValueError(
             (
                 "Inference API response does not "
@@ -1357,7 +1406,6 @@ def save_prediction(
         "fraud_risk_score"
         not in prediction
     ):
-
         raise ValueError(
             (
                 "Prediction does not contain "
@@ -1365,18 +1413,13 @@ def save_prediction(
             )
         )
 
-    score = (
-        float(
-            prediction[
-                "fraud_risk_score"
-            ]
-        )
+    score = float(
+        prediction[
+            "fraud_risk_score"
+        ]
     )
 
-    if not np.isfinite(
-        score
-    ):
-
+    if not np.isfinite(score):
         raise ValueError(
             (
                 "Inference API returned a "
@@ -1388,14 +1431,12 @@ def save_prediction(
         prediction
     )
 
-    st.session_state.single_score = (
-        min(
-            max(
-                score,
-                0.0,
-            ),
-            1.0,
-        )
+    st.session_state.single_score = min(
+        max(
+            score,
+            0.0,
+        ),
+        1.0,
     )
 
     st.session_state.single_claim = (
@@ -1406,22 +1447,20 @@ def save_prediction(
         source
     )
 
+    st.session_state.single_explanation = (
+        _extract_explanation_payload(
+            explanation_response
+        )
+    )
+
 
 def _clear_prediction() -> None:
     """
-    Clear the persisted prediction.
+    Clear persisted prediction and explanation state.
     """
 
-    for key in (
-        "single_prediction",
-        "single_score",
-        "single_claim",
-        "single_source",
-    ):
-
-        st.session_state[
-            key
-        ] = None
+    for key in PREDICTION_STATE_KEYS:
+        st.session_state[key] = None
 
 
 def _reset_analysis() -> None:
@@ -1434,10 +1473,51 @@ def _reset_analysis() -> None:
     for key in SMART_WIDGET_KEYS:
 
         if key in st.session_state:
+            del st.session_state[key]
 
-            del st.session_state[
-                key
-            ]
+
+def _score_and_explain(
+    client,
+    claim: dict[str, Any],
+    source: str,
+) -> None:
+    """
+    Execute scoring and TreeSHAP explanation as one frontend workflow.
+
+    Scoring remains authoritative. Explainability is additive:
+    if explanation retrieval fails, the valid prediction is preserved.
+    """
+
+    clean_claim = _strip_leakage(
+        claim
+    )
+
+    response = client.score_claim(
+        clean_claim
+    )
+
+    explanation_response = None
+
+    try:
+        explanation_response = (
+            client.explain_claim(
+                clean_claim
+            )
+        )
+
+    except Exception as exc:
+        # Do not discard a successful model prediction because the
+        # explanation endpoint is temporarily unavailable.
+        explanation_response = {
+            "_frontend_explanation_error": str(exc),
+        }
+
+    save_prediction(
+        clean_claim,
+        response,
+        source,
+        explanation_response,
+    )
 
 
 # =============================================================================
@@ -1454,15 +1534,9 @@ def _recommendation(
 ]:
     """
     Convert model risk into an operational recommendation.
-
-    Returns
-    -------
-    tuple
-        action, explanation, visual tone
     """
 
     if score >= 0.50:
-
         return (
             "Priority review",
             (
@@ -1474,7 +1548,6 @@ def _recommendation(
         )
 
     if score >= 0.20:
-
         return (
             "Review recommended",
             (
@@ -1485,7 +1558,6 @@ def _recommendation(
         )
 
     if score >= 0.05:
-
         return (
             "Capacity dependent",
             (
@@ -1508,6 +1580,738 @@ def _recommendation(
 
 
 # =============================================================================
+# SHAP helpers
+# =============================================================================
+
+
+def _get_contribution_name(
+    item: dict[str, Any],
+) -> str:
+    """
+    Extract a feature name from a SHAP contribution object.
+    """
+
+    for key in (
+        "feature",
+        "feature_name",
+        "name",
+    ):
+        value = item.get(key)
+
+        if value is not None:
+            return str(value)
+
+    return "unknown_feature"
+
+
+def _get_contribution_value(
+    item: dict[str, Any],
+) -> float:
+    """
+    Extract a finite SHAP contribution.
+    """
+
+    for key in (
+        "shap_value",
+        "contribution",
+        "value_contribution",
+    ):
+
+        if key not in item:
+            continue
+
+        try:
+            value = float(
+                item[key]
+            )
+
+            if np.isfinite(value):
+                return value
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+            continue
+
+    return 0.0
+
+
+def _get_feature_value(
+    item: dict[str, Any],
+) -> Any:
+    """
+    Extract transformed feature value when supplied by the API.
+    """
+
+    for key in (
+        "feature_value",
+        "transformed_value",
+        "input_value",
+        "value",
+    ):
+
+        if key in item:
+            return item[key]
+
+    return None
+
+
+def _normalize_contributions(
+    explanation: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """
+    Normalize the API's full SHAP contribution collection.
+    """
+
+    candidates = (
+        explanation.get(
+            "all_contributions"
+        )
+        or explanation.get(
+            "contributions"
+        )
+        or []
+    )
+
+    if not isinstance(
+        candidates,
+        list,
+    ):
+        return []
+
+    normalized = []
+
+    for item in candidates:
+
+        if not isinstance(
+            item,
+            dict,
+        ):
+            continue
+
+        shap_value = (
+            _get_contribution_value(
+                item
+            )
+        )
+
+        normalized.append(
+            {
+                "feature":
+                    _get_contribution_name(
+                        item
+                    ),
+
+                "feature_value":
+                    _get_feature_value(
+                        item
+                    ),
+
+                "shap_value":
+                    shap_value,
+
+                "absolute_shap":
+                    abs(
+                        shap_value
+                    ),
+            }
+        )
+
+    normalized.sort(
+        key=lambda item:
+            item["absolute_shap"],
+        reverse=True,
+    )
+
+    return normalized
+
+
+def _normalize_driver_collection(
+    explanation: dict[str, Any],
+    key: str,
+) -> list[dict[str, Any]]:
+    """
+    Normalize positive / negative driver lists returned by the API.
+    """
+
+    raw = explanation.get(
+        key,
+        []
+    )
+
+    if not isinstance(
+        raw,
+        list,
+    ):
+        return []
+
+    result = []
+
+    for item in raw:
+
+        if not isinstance(
+            item,
+            dict,
+        ):
+            continue
+
+        shap_value = (
+            _get_contribution_value(
+                item
+            )
+        )
+
+        result.append(
+            {
+                "feature":
+                    _get_contribution_name(
+                        item
+                    ),
+
+                "feature_value":
+                    _get_feature_value(
+                        item
+                    ),
+
+                "shap_value":
+                    shap_value,
+
+                "absolute_shap":
+                    abs(
+                        shap_value
+                    ),
+            }
+        )
+
+    result.sort(
+        key=lambda item:
+            item["absolute_shap"],
+        reverse=True,
+    )
+
+    return result
+
+
+def _explanation_drivers(
+    explanation: dict[str, Any],
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
+    """
+    Return risk-increasing and risk-reducing SHAP drivers.
+
+    Prefer dedicated backend collections. Fall back to the sign of
+    the complete SHAP contribution vector.
+    """
+
+    positive = (
+        _normalize_driver_collection(
+            explanation,
+            "positive_drivers",
+        )
+    )
+
+    negative = (
+        _normalize_driver_collection(
+            explanation,
+            "negative_drivers",
+        )
+    )
+
+    if positive or negative:
+        return (
+            positive,
+            negative,
+        )
+
+    contributions = (
+        _normalize_contributions(
+            explanation
+        )
+    )
+
+    positive = [
+        item
+        for item in contributions
+        if item["shap_value"] > 0
+    ]
+
+    negative = [
+        item
+        for item in contributions
+        if item["shap_value"] < 0
+    ]
+
+    return (
+        positive,
+        negative,
+    )
+
+
+def _render_driver(
+    driver: dict[str, Any],
+    *,
+    direction: str,
+) -> None:
+    """
+    Render one SHAP driver in an analyst-readable form.
+    """
+
+    feature_name = (
+        _humanize_feature_name(
+            driver.get(
+                "feature"
+            )
+        )
+    )
+
+    feature_value = (
+        _format_feature_value(
+            driver.get(
+                "feature_value"
+            )
+        )
+    )
+
+    contribution = (
+        _safe_float(
+            driver.get(
+                "shap_value"
+            )
+        )
+    )
+
+    sign = (
+        "+"
+        if contribution >= 0
+        else "−"
+    )
+
+    with st.container(
+        border=True
+    ):
+        st.markdown(
+            f"**{feature_name}**"
+        )
+
+        if (
+            driver.get(
+                "feature_value"
+            )
+            is not None
+        ):
+            st.caption(
+                (
+                    "Observed model value: "
+                    f"{feature_value}"
+                )
+            )
+
+        if direction == "increase":
+            st.write(
+                (
+                    "Contribution toward higher "
+                    "predicted fraud risk"
+                )
+            )
+
+        else:
+            st.write(
+                (
+                    "Contribution toward lower "
+                    "predicted fraud risk"
+                )
+            )
+
+        st.caption(
+            (
+                "SHAP contribution: "
+                f"{sign}{abs(contribution):.4f} "
+                "raw-margin units"
+            )
+        )
+
+
+def _render_explainability() -> None:
+    """
+    Render local TreeSHAP explanation for the active claim.
+    """
+
+    explanation = (
+        st.session_state.get(
+            "single_explanation"
+        )
+    )
+
+    if not isinstance(
+        explanation,
+        dict,
+    ):
+        return
+
+    st.write("")
+    st.write("")
+
+    section_header(
+        "Model Explanation",
+        (
+            "Local TreeSHAP attribution showing which model "
+            "features moved this claim's prediction upward "
+            "or downward relative to the model baseline."
+        ),
+    )
+
+    explanation_error = (
+        explanation.get(
+            "_frontend_explanation_error"
+        )
+    )
+
+    if explanation_error:
+        st.warning(
+            (
+                "The claim was scored successfully, but the "
+                "model explanation is currently unavailable. "
+                f"{explanation_error}"
+            )
+        )
+        return
+
+    method = (
+        explanation.get(
+            "explanation_method"
+        )
+        or explanation.get(
+            "method"
+        )
+        or "TreeSHAP"
+    )
+
+    output_space = (
+        explanation.get(
+            "explanation_space"
+        )
+        or explanation.get(
+            "output_space"
+        )
+        or "raw_margin_log_odds"
+    )
+
+    transformed_feature_count = (
+        explanation.get(
+            "transformed_feature_count"
+        )
+    )
+
+    contributions = (
+        _normalize_contributions(
+            explanation
+        )
+    )
+
+    if transformed_feature_count is None:
+        transformed_feature_count = len(
+            contributions
+        )
+
+    consistency = explanation.get(
+        "consistency",
+        {},
+    )
+
+    if not isinstance(
+        consistency,
+        dict,
+    ):
+        consistency = {}
+
+    shap_ok = consistency.get(
+        "shap_additivity_ok"
+    )
+
+    probability_ok = consistency.get(
+        "probability_consistency_ok"
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        metric_card(
+            "Method",
+            str(method),
+            "Local explanation engine",
+            tone="info",
+        )
+
+    with c2:
+        metric_card(
+            "Feature Space",
+            str(
+                transformed_feature_count
+            ),
+            "Transformed model features",
+            tone="neutral",
+        )
+
+    with c3:
+        metric_card(
+            "SHAP Additivity",
+            (
+                "Verified"
+                if shap_ok is True
+                else (
+                    "Failed"
+                    if shap_ok is False
+                    else "Unavailable"
+                )
+            ),
+            "Raw-margin reconstruction",
+            tone=(
+                "success"
+                if shap_ok is True
+                else (
+                    "danger"
+                    if shap_ok is False
+                    else "neutral"
+                )
+            ),
+        )
+
+    with c4:
+        metric_card(
+            "Probability Check",
+            (
+                "Verified"
+                if probability_ok is True
+                else (
+                    "Failed"
+                    if probability_ok is False
+                    else "Unavailable"
+                )
+            ),
+            "Probability reconstruction",
+            tone=(
+                "success"
+                if probability_ok is True
+                else (
+                    "danger"
+                    if probability_ok is False
+                    else "neutral"
+                )
+            ),
+        )
+
+    st.write("")
+
+    info_panel(
+        "How to interpret this explanation",
+        (
+            "Positive SHAP values push the model prediction toward "
+            "higher fraud risk; negative values push it toward lower "
+            "fraud risk. These are predictive contributions, not "
+            "causal findings and not evidence of fraud by themselves."
+        ),
+        tone="info",
+    )
+
+    st.write("")
+
+    positive, negative = (
+        _explanation_drivers(
+            explanation
+        )
+    )
+
+    left, right = st.columns(
+        2,
+        gap="large",
+    )
+
+    with left:
+        st.markdown(
+            "#### Factors increasing model risk"
+        )
+
+        st.caption(
+            (
+                "Largest positive local contributions "
+                "for this claim."
+            )
+        )
+
+        visible_positive = (
+            positive[
+                :MAX_VISIBLE_SHAP_DRIVERS
+            ]
+        )
+
+        if not visible_positive:
+            st.info(
+                (
+                    "No positive SHAP contribution "
+                    "was returned for this claim."
+                )
+            )
+
+        else:
+            for driver in visible_positive:
+                _render_driver(
+                    driver,
+                    direction="increase",
+                )
+
+    with right:
+        st.markdown(
+            "#### Factors reducing model risk"
+        )
+
+        st.caption(
+            (
+                "Largest negative local contributions "
+                "for this claim."
+            )
+        )
+
+        visible_negative = (
+            negative[
+                :MAX_VISIBLE_SHAP_DRIVERS
+            ]
+        )
+
+        if not visible_negative:
+            st.info(
+                (
+                    "No negative SHAP contribution "
+                    "was returned for this claim."
+                )
+            )
+
+        else:
+            for driver in visible_negative:
+                _render_driver(
+                    driver,
+                    direction="decrease",
+                )
+
+    # -------------------------------------------------------------------------
+    # Technical explanation
+    # -------------------------------------------------------------------------
+
+    st.write("")
+
+    with st.expander(
+        "Technical SHAP diagnostics",
+        expanded=False,
+    ):
+        st.markdown(
+            "##### Explanation contract"
+        )
+
+        technical = {
+            "method":
+                method,
+
+            "output_space":
+                output_space,
+
+            "transformed_feature_count":
+                transformed_feature_count,
+
+            "base_value":
+                explanation.get(
+                    "base_value"
+                ),
+
+            "model_raw_margin":
+                explanation.get(
+                    "model_raw_margin"
+                ),
+
+            "shap_reconstructed_margin":
+                explanation.get(
+                    "shap_reconstructed_margin"
+                ),
+
+            "fraud_probability":
+                explanation.get(
+                    "fraud_probability"
+                ),
+
+            "shap_reconstructed_probability":
+                explanation.get(
+                    "shap_reconstructed_probability"
+                ),
+
+            "consistency":
+                consistency,
+        }
+
+        st.json(
+            _json_safe(
+                technical
+            )
+        )
+
+        if contributions:
+
+            st.markdown(
+                "##### Full transformed-feature attribution"
+            )
+
+            technical_frame = pd.DataFrame(
+                contributions[
+                    :MAX_TECHNICAL_SHAP_ROWS
+                ]
+            )
+
+            technical_frame[
+                "feature_label"
+            ] = (
+                technical_frame[
+                    "feature"
+                ]
+                .map(
+                    _humanize_feature_name
+                )
+            )
+
+            technical_frame = (
+                technical_frame[
+                    [
+                        "feature",
+                        "feature_label",
+                        "feature_value",
+                        "shap_value",
+                        "absolute_shap",
+                    ]
+                ]
+            )
+
+            st.dataframe(
+                technical_frame,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            st.caption(
+                (
+                    f"{len(contributions):,} transformed "
+                    "feature contributions returned."
+                )
+            )
+
+        else:
+            st.info(
+                (
+                    "The API did not expose the complete "
+                    "transformed-feature contribution vector."
+                )
+            )
+
+
+# =============================================================================
 # Claim snapshot
 # =============================================================================
 
@@ -1527,12 +2331,9 @@ def _render_claim_snapshot(
         ),
     )
 
-    c1, c2, c3, c4 = (
-        st.columns(4)
-    )
+    c1, c2, c3, c4 = st.columns(4)
 
     with c1:
-
         metric_card(
             "Claim Amount",
             (
@@ -1544,7 +2345,6 @@ def _render_claim_snapshot(
         )
 
     with c2:
-
         metric_card(
             "Requested",
             (
@@ -1556,7 +2356,6 @@ def _render_claim_snapshot(
         )
 
     with c3:
-
         metric_card(
             "Customer 30d",
             str(
@@ -1571,7 +2370,6 @@ def _render_claim_snapshot(
         )
 
     with c4:
-
         metric_card(
             "Provider 30d",
             str(
@@ -1590,13 +2388,9 @@ def _render_claim_snapshot(
     with st.container(
         border=True
     ):
-
-        c1, c2 = (
-            st.columns(2)
-        )
+        c1, c2 = st.columns(2)
 
         with c1:
-
             st.caption(
                 "CUSTOMER"
             )
@@ -1624,7 +2418,6 @@ def _render_claim_snapshot(
             )
 
         with c2:
-
             st.caption(
                 "SERVICE CATEGORY"
             )
@@ -1693,9 +2486,7 @@ def _render_assessment() -> None:
     ):
         return
 
-    score = float(
-        score
-    )
+    score = float(score)
 
     st.write("")
     st.write("")
@@ -1708,22 +2499,15 @@ def _render_assessment() -> None:
         ),
     )
 
-    left, right = (
-        st.columns(
-            [
-                0.85,
-                1.75,
-            ],
-            gap="large",
-        )
+    left, right = st.columns(
+        [
+            0.85,
+            1.75,
+        ],
+        gap="large",
     )
 
-    # -------------------------------------------------------------------------
-    # Risk gauge
-    # -------------------------------------------------------------------------
-
     with left:
-
         risk_gauge(
             score
         )
@@ -1732,45 +2516,27 @@ def _render_assessment() -> None:
             score
         )
 
-    # -------------------------------------------------------------------------
-    # Decision support
-    # -------------------------------------------------------------------------
-
     with right:
-
         with st.container(
             border=True
         ):
-
             (
                 recommendation,
                 explanation,
                 recommendation_tone,
-            ) = (
-                _recommendation(
-                    score
-                )
+            ) = _recommendation(
+                score
             )
 
-            c1, c2, c3 = (
-                st.columns(
-                    [
-                        1,
-                        1,
-                        1.35,
-                    ]
-                )
+            c1, c2, c3 = st.columns(
+                [
+                    1,
+                    1,
+                    1.35,
+                ]
             )
 
-            # IMPORTANT:
-            # We deliberately use our own responsive metric_card()
-            # rather than st.metric() here.
-            #
-            # Native Streamlit metrics can apply internal truncation
-            # to long text such as "Routine processing".
-            # metric_card() guarantees complete business text.
             with c1:
-
                 metric_card(
                     "Fraud Risk",
                     f"{score:.2%}",
@@ -1779,7 +2545,6 @@ def _render_assessment() -> None:
                 )
 
             with c2:
-
                 metric_card(
                     "Risk Tier",
                     risk_tier(
@@ -1790,7 +2555,6 @@ def _render_assessment() -> None:
                 )
 
             with c3:
-
                 metric_card(
                     "Recommended Action",
                     recommendation,
@@ -1801,21 +2565,9 @@ def _render_assessment() -> None:
             st.write("")
             st.divider()
 
-            # -----------------------------------------------------------------
-            # Claim / model identity
-            # -----------------------------------------------------------------
-
-            c1, c2 = (
-                st.columns(
-                    [
-                        1,
-                        1,
-                    ]
-                )
-            )
+            c1, c2 = st.columns(2)
 
             with c1:
-
                 st.caption(
                     "CLAIM"
                 )
@@ -1837,7 +2589,6 @@ def _render_assessment() -> None:
                 )
 
             with c2:
-
                 st.caption(
                     "MODEL"
                 )
@@ -1874,30 +2625,22 @@ def _render_assessment() -> None:
 
             st.divider()
 
-            # -----------------------------------------------------------------
-            # Operational recommendation
-            # -----------------------------------------------------------------
-
             if score >= 0.50:
-
                 st.error(
                     explanation
                 )
 
             elif score >= 0.20:
-
                 st.warning(
                     explanation
                 )
 
             elif score >= 0.05:
-
                 st.info(
                     explanation
                 )
 
             else:
-
                 st.success(
                     explanation
                 )
@@ -1917,6 +2660,8 @@ def _render_assessment() -> None:
         claim
     )
 
+    _render_explainability()
+
     st.write("")
 
     human_review_notice()
@@ -1927,7 +2672,6 @@ def _render_assessment() -> None:
         "Technical model input",
         expanded=False,
     ):
-
         st.json(
             _strip_leakage(
                 claim
@@ -1957,25 +2701,16 @@ def _render_smart_form(
     )
 
     try:
-
-        history = (
-            _load_context_data()
-        )
+        history = _load_context_data()
 
     except Exception as exc:
-
         st.error(
             (
                 "Historical context could not be loaded. "
                 f"{exc}"
             )
         )
-
         return
-
-    # -------------------------------------------------------------------------
-    # Identity domains
-    # -------------------------------------------------------------------------
 
     customers = (
         history[
@@ -2015,19 +2750,13 @@ def _render_smart_form(
         or not providers
         or not categories
     ):
-
         st.error(
             (
                 "Historical context does not contain "
                 "enough entities for Smart Analysis."
             )
         )
-
         return
-
-    # -------------------------------------------------------------------------
-    # Context
-    # -------------------------------------------------------------------------
 
     st.markdown(
         "#### Claim context"
@@ -2040,60 +2769,43 @@ def _render_smart_form(
         )
     )
 
-    c1, c2 = (
-        st.columns(2)
-    )
+    c1, c2 = st.columns(2)
 
     with c1:
-
-        customer_id = (
-            st.selectbox(
-                "Customer",
-                options=customers,
-                key="smart_customer_id",
-                help=(
-                    "Customer history is retrieved "
-                    "automatically from the historical context."
-                ),
-            )
+        customer_id = st.selectbox(
+            "Customer",
+            options=customers,
+            key="smart_customer_id",
+            help=(
+                "Customer history is retrieved "
+                "automatically from the historical context."
+            ),
         )
 
     with c2:
-
-        provider_id = (
-            st.selectbox(
-                "Provider",
-                options=providers,
-                key="smart_provider_id",
-                help=(
-                    "Provider activity and monetary "
-                    "benchmarks are generated automatically."
-                ),
-            )
+        provider_id = st.selectbox(
+            "Provider",
+            options=providers,
+            key="smart_provider_id",
+            help=(
+                "Provider activity and monetary "
+                "benchmarks are generated automatically."
+            ),
         )
 
     st.write("")
-
-    # -------------------------------------------------------------------------
-    # Service
-    # -------------------------------------------------------------------------
 
     st.markdown(
         "#### Service"
     )
 
-    c1, c2 = (
-        st.columns(2)
-    )
+    c1, c2 = st.columns(2)
 
     with c1:
-
-        service_category = (
-            st.selectbox(
-                "Service category",
-                options=categories,
-                key="smart_service_category",
-            )
+        service_category = st.selectbox(
+            "Service category",
+            options=categories,
+            key="smart_service_category",
         )
 
     compatible_codes = (
@@ -2102,9 +2814,7 @@ def _render_smart_form(
                 "service_category"
             ]
             .astype(str)
-            == str(
-                service_category
-            ),
+            == str(service_category),
             "service_code",
         ]
         .dropna()
@@ -2115,40 +2825,28 @@ def _render_smart_form(
     )
 
     if not compatible_codes:
-
         st.error(
             (
                 "No service codes are available "
                 "for the selected category."
             )
         )
-
         return
 
     with c2:
-
-        service_code = (
-            st.selectbox(
-                "Service",
-                options=compatible_codes,
-                key="smart_service_code",
-            )
+        service_code = st.selectbox(
+            "Service",
+            options=compatible_codes,
+            key="smart_service_code",
         )
 
     st.write("")
-
-    # -------------------------------------------------------------------------
-    # Timing
-    # -------------------------------------------------------------------------
 
     st.markdown(
         "#### Timing"
     )
 
-    today = (
-        datetime.now()
-        .date()
-    )
+    today = datetime.now().date()
 
     default_service_date = (
         today
@@ -2157,30 +2855,22 @@ def _render_smart_form(
         )
     )
 
-    c1, c2 = (
-        st.columns(2)
-    )
+    c1, c2 = st.columns(2)
 
     with c1:
-
-        service_date_value = (
-            st.date_input(
-                "Service date",
-                value=default_service_date,
-                max_value=today,
-                key="smart_service_date",
-            )
+        service_date_value = st.date_input(
+            "Service date",
+            value=default_service_date,
+            max_value=today,
+            key="smart_service_date",
         )
 
     with c2:
-
-        submission_date = (
-            st.date_input(
-                "Submission date",
-                value=today,
-                max_value=today,
-                key="smart_submission_date",
-            )
+        submission_date = st.date_input(
+            "Submission date",
+            value=today,
+            max_value=today,
+            key="smart_submission_date",
         )
 
     invalid_dates = (
@@ -2189,7 +2879,6 @@ def _render_smart_form(
     )
 
     if invalid_dates:
-
         st.error(
             (
                 "Service date must be on or before "
@@ -2197,37 +2886,24 @@ def _render_smart_form(
             )
         )
 
-    # -------------------------------------------------------------------------
-    # Historical service reference
-    #
-    # Use only context preceding the selected submission date to avoid
-    # introducing future information into the UI recommendation.
-    # -------------------------------------------------------------------------
-
-    reference_timestamp = (
-        pd.Timestamp(
-            datetime.combine(
-                submission_date,
-                time.max,
-            )
+    reference_timestamp = pd.Timestamp(
+        datetime.combine(
+            submission_date,
+            time.max,
         )
     )
 
-    reference_history = (
-        _history_before(
-            history,
-            reference_timestamp,
-        )
+    reference_history = _history_before(
+        history,
+        reference_timestamp,
     )
 
     (
         typical_amount,
         typical_requested,
-    ) = (
-        _service_reference(
-            reference_history,
-            service_code,
-        )
+    ) = _service_reference(
+        reference_history,
+        service_code,
     )
 
     st.write("")
@@ -2244,58 +2920,46 @@ def _render_smart_form(
 
     st.write("")
 
-    # -------------------------------------------------------------------------
-    # Financials
-    # -------------------------------------------------------------------------
-
     st.markdown(
         "#### Financial information"
     )
 
-    c1, c2 = (
-        st.columns(2)
-    )
+    c1, c2 = st.columns(2)
 
     with c1:
-
-        claim_amount = (
-            st.number_input(
-                "Claim amount (€)",
-                min_value=0.01,
-                value=float(
-                    round(
-                        typical_amount,
-                        2,
-                    )
-                ),
-                step=10.0,
-                format="%.2f",
-                key="smart_claim_amount",
-            )
+        claim_amount = st.number_input(
+            "Claim amount (€)",
+            min_value=0.01,
+            value=float(
+                round(
+                    typical_amount,
+                    2,
+                )
+            ),
+            step=10.0,
+            format="%.2f",
+            key="smart_claim_amount",
         )
 
     with c2:
-
-        requested_reimbursement = (
-            st.number_input(
-                "Requested reimbursement (€)",
-                min_value=0.0,
-                value=float(
-                    round(
-                        min(
-                            typical_requested,
-                            max(
-                                typical_amount,
-                                0.01,
-                            ),
+        requested_reimbursement = st.number_input(
+            "Requested reimbursement (€)",
+            min_value=0.0,
+            value=float(
+                round(
+                    min(
+                        typical_requested,
+                        max(
+                            typical_amount,
+                            0.01,
                         ),
-                        2,
-                    )
-                ),
-                step=10.0,
-                format="%.2f",
-                key="smart_requested_reimbursement",
-            )
+                    ),
+                    2,
+                )
+            ),
+            step=10.0,
+            format="%.2f",
+            key="smart_requested_reimbursement",
         )
 
     reimbursement_ratio = (
@@ -2310,12 +2974,9 @@ def _render_smart_form(
         )
     )
 
-    ratio_col1, ratio_col2 = (
-        st.columns(2)
-    )
+    ratio_col1, ratio_col2 = st.columns(2)
 
     with ratio_col1:
-
         st.caption(
             (
                 "Requested / claim amount: "
@@ -2324,12 +2985,10 @@ def _render_smart_form(
         )
 
     with ratio_col2:
-
         if (
             requested_reimbursement
             > claim_amount
         ):
-
             st.warning(
                 (
                     "Requested reimbursement exceeds "
@@ -2339,188 +2998,145 @@ def _render_smart_form(
 
     st.write("")
 
-    # -------------------------------------------------------------------------
-    # Optional details
-    # -------------------------------------------------------------------------
-
     with st.expander(
         "Optional claim details",
         expanded=False,
     ):
-
-        c1, c2 = (
-            st.columns(2)
-        )
+        c1, c2 = st.columns(2)
 
         with c1:
-
-            service_units = (
-                st.number_input(
-                    "Service units",
-                    min_value=1,
-                    max_value=100,
-                    value=1,
-                    step=1,
-                    key="smart_service_units",
-                )
+            service_units = st.number_input(
+                "Service units",
+                min_value=1,
+                max_value=100,
+                value=1,
+                step=1,
+                key="smart_service_units",
             )
 
-            submission_channel = (
-                st.selectbox(
-                    "Submission channel",
-                    options=[
-                        "web",
-                        "mobile_app",
-                        "provider_direct",
-                        "email",
-                        "paper",
-                    ],
-                    key="smart_submission_channel",
-                )
+            submission_channel = st.selectbox(
+                "Submission channel",
+                options=[
+                    "web",
+                    "mobile_app",
+                    "provider_direct",
+                    "email",
+                    "paper",
+                ],
+                key="smart_submission_channel",
             )
 
-            document_count = (
-                st.number_input(
-                    "Documents",
-                    min_value=0,
-                    max_value=100,
-                    value=1,
-                    step=1,
-                    key="smart_document_count",
-                )
+            document_count = st.number_input(
+                "Documents",
+                min_value=0,
+                max_value=100,
+                value=1,
+                step=1,
+                key="smart_document_count",
             )
 
         with c2:
-
-            has_invoice = (
-                st.toggle(
-                    "Invoice attached",
-                    value=True,
-                    key="smart_has_invoice",
-                )
+            has_invoice = st.toggle(
+                "Invoice attached",
+                value=True,
+                key="smart_has_invoice",
             )
 
-            prescription_state = (
-                st.selectbox(
-                    "Prescription",
-                    options=[
-                        "Not required / unknown",
-                        "Yes",
-                        "No",
-                    ],
-                    key="smart_prescription",
-                )
+            prescription_state = st.selectbox(
+                "Prescription",
+                options=[
+                    "Not required / unknown",
+                    "Yes",
+                    "No",
+                ],
+                key="smart_prescription",
             )
 
-            submission_hour = (
-                st.slider(
-                    "Submission hour",
-                    min_value=0,
-                    max_value=23,
-                    value=12,
-                    key="smart_submission_hour",
-                )
+            submission_hour = st.slider(
+                "Submission hour",
+                min_value=0,
+                max_value=23,
+                value=12,
+                key="smart_submission_hour",
             )
-
-    # -------------------------------------------------------------------------
-    # Analyze
-    # -------------------------------------------------------------------------
 
     st.write("")
 
-    analyze = (
-        st.button(
-            "Analyze Claim",
-            type="primary",
-            use_container_width=True,
-            key="smart_analyze_claim",
-            disabled=invalid_dates,
-        )
+    analyze = st.button(
+        "Analyze Claim",
+        type="primary",
+        use_container_width=True,
+        key="smart_analyze_claim",
+        disabled=invalid_dates,
     )
 
     if not analyze:
         return
 
     if prescription_state == "Yes":
-
         has_prescription = True
 
     elif prescription_state == "No":
-
         has_prescription = False
 
     else:
-
         has_prescription = None
 
-    submission_datetime = (
-        datetime.combine(
-            submission_date,
-            time(
-                hour=int(
-                    submission_hour
-                )
-            ),
-        )
+    submission_datetime = datetime.combine(
+        submission_date,
+        time(
+            hour=int(
+                submission_hour
+            )
+        ),
     )
 
     try:
-
         with st.spinner(
             (
-                "Retrieving historical context, "
-                "building model features and scoring claim..."
+                "Retrieving historical context, building "
+                "model features, scoring and explaining claim..."
             )
         ):
-
-            claim = (
-                _build_smart_claim(
-                    history=history,
-                    customer_id=customer_id,
-                    provider_id=provider_id,
-                    service_category=service_category,
-                    service_code=service_code,
-                    service_units=int(
-                        service_units
-                    ),
-                    service_date=service_date_value,
-                    submission_datetime=submission_datetime,
-                    claim_amount=float(
-                        claim_amount
-                    ),
-                    requested_reimbursement=float(
-                        requested_reimbursement
-                    ),
-                    submission_channel=submission_channel,
-                    document_count=int(
-                        document_count
-                    ),
-                    has_invoice=has_invoice,
-                    has_prescription=has_prescription,
-                )
+            claim = _build_smart_claim(
+                history=history,
+                customer_id=customer_id,
+                provider_id=provider_id,
+                service_category=service_category,
+                service_code=service_code,
+                service_units=int(
+                    service_units
+                ),
+                service_date=service_date_value,
+                submission_datetime=submission_datetime,
+                claim_amount=float(
+                    claim_amount
+                ),
+                requested_reimbursement=float(
+                    requested_reimbursement
+                ),
+                submission_channel=submission_channel,
+                document_count=int(
+                    document_count
+                ),
+                has_invoice=has_invoice,
+                has_prescription=has_prescription,
             )
 
-            response = (
-                client.score_claim(
-                    claim
-                )
+            _score_and_explain(
+                client,
+                claim,
+                "Smart Analysis",
             )
-
-        save_prediction(
-            claim,
-            response,
-            "Smart Analysis",
-        )
 
         st.success(
             (
-                "Claim successfully enriched and scored "
-                "with the deployed model."
+                "Claim successfully enriched, scored "
+                "and explained with the deployed model."
             )
         )
 
     except Exception as exc:
-
         st.error(
             (
                 "Unable to analyze this claim. "
@@ -2538,70 +3154,55 @@ def _render_quick_demo(
     client,
 ) -> None:
     """
-    Score one complete historical synthetic claim.
+    Score and explain one complete historical synthetic claim.
     """
 
     section_header(
         "Quick Demo",
         (
-            "Run the deployed inference pipeline "
-            "against a complete synthetic example."
+            "Run the deployed inference and explainability "
+            "pipeline against a complete synthetic example."
         ),
     )
 
     try:
-
-        demo_claims = (
-            load_demo_claims()
-        )
+        demo_claims = load_demo_claims()
 
         if demo_claims.empty:
-
             st.info(
                 (
                     "No demonstration claims "
                     "are available."
                 )
             )
-
             return
 
-        index = (
-            st.selectbox(
-                "Demo claim",
-                options=range(
-                    min(
-                        len(
-                            demo_claims
-                        ),
-                        100,
+        index = st.selectbox(
+            "Demo claim",
+            options=range(
+                min(
+                    len(demo_claims),
+                    100,
+                )
+            ),
+            format_func=lambda i:
+                str(
+                    demo_claims
+                    .iloc[i]
+                    .get(
+                        "claim_id",
+                        i,
                     )
                 ),
-                format_func=lambda i:
-                    str(
-                        demo_claims
-                        .iloc[i]
-                        .get(
-                            "claim_id",
-                            i,
-                        )
-                    ),
-                key="demo_claim_selector",
-            )
+            key="demo_claim_selector",
         )
 
-        raw_claim = (
-            get_demo_claim(
-                int(
-                    index
-                )
-            )
+        raw_claim = get_demo_claim(
+            int(index)
         )
 
-        claim = (
-            _strip_leakage(
-                raw_claim
-            )
+        claim = _strip_leakage(
+            raw_claim
         )
 
         if st.button(
@@ -2610,30 +3211,22 @@ def _render_quick_demo(
             use_container_width=True,
             key="analyze_demo_claim",
         ):
-
             with st.spinner(
                 (
-                    "Building features and "
-                    "scoring demonstration claim..."
+                    "Building features, scoring and "
+                    "explaining demonstration claim..."
                 )
             ):
-
-                response = (
-                    client.score_claim(
-                        claim
-                    )
+                _score_and_explain(
+                    client,
+                    claim,
+                    "Quick Demo",
                 )
-
-            save_prediction(
-                claim,
-                response,
-                "Quick Demo",
-            )
 
             st.success(
                 (
-                    "Demo claim scored "
-                    "successfully."
+                    "Demo claim scored and "
+                    "explained successfully."
                 )
             )
 
@@ -2641,17 +3234,13 @@ def _render_quick_demo(
             "View inference payload",
             expanded=False,
         ):
-
             st.json(
                 claim
             )
 
     except Exception as exc:
-
         st.error(
-            str(
-                exc
-            )
+            str(exc)
         )
 
 
@@ -2664,7 +3253,7 @@ def _render_advanced_json(
     client,
 ) -> None:
     """
-    Render direct technical payload scoring.
+    Render direct technical payload scoring and explanation.
     """
 
     section_header(
@@ -2687,56 +3276,46 @@ def _render_advanced_json(
 
     st.write("")
 
-    raw = (
-        st.text_area(
-            "Complete claim JSON",
-            height=420,
-            placeholder=(
-                "{\n"
-                '  "claim_id": "LIVE_...",\n'
-                '  "...": "..."\n'
-                "}"
-            ),
-            key="advanced_json_payload",
-        )
+    raw = st.text_area(
+        "Complete claim JSON",
+        height=420,
+        placeholder=(
+            "{\n"
+            '  "claim_id": "LIVE_...",\n'
+            '  "...": "..."\n'
+            "}"
+        ),
+        key="advanced_json_payload",
     )
 
-    analyze = (
-        st.button(
-            "Analyze JSON",
-            type="primary",
-            use_container_width=True,
-            key="analyze_json",
-        )
+    analyze = st.button(
+        "Analyze JSON",
+        type="primary",
+        use_container_width=True,
+        key="analyze_json",
     )
 
     if not analyze:
         return
 
     if not raw.strip():
-
         st.warning(
             (
                 "Paste a claim JSON "
                 "payload first."
             )
         )
-
         return
 
     try:
-
-        claim = (
-            json.loads(
-                raw
-            )
+        claim = json.loads(
+            raw
         )
 
         if not isinstance(
             claim,
             dict,
         ):
-
             raise ValueError(
                 (
                     "The JSON payload must contain "
@@ -2744,14 +3323,11 @@ def _render_advanced_json(
                 )
             )
 
-        clean_claim = (
-            _strip_leakage(
-                claim
-            )
+        clean_claim = _strip_leakage(
+            claim
         )
 
         if not clean_claim:
-
             raise ValueError(
                 (
                     "The payload contains no "
@@ -2761,32 +3337,24 @@ def _render_advanced_json(
 
         with st.spinner(
             (
-                "Validating payload, building features "
-                "and scoring claim..."
+                "Validating payload, building features, "
+                "scoring and explaining claim..."
             )
         ):
-
-            response = (
-                client.score_claim(
-                    clean_claim
-                )
+            _score_and_explain(
+                client,
+                clean_claim,
+                "Advanced JSON",
             )
-
-        save_prediction(
-            clean_claim,
-            response,
-            "Advanced JSON",
-        )
 
         st.success(
             (
-                "JSON claim scored "
-                "successfully."
+                "JSON claim scored and "
+                "explained successfully."
             )
         )
 
     except json.JSONDecodeError as exc:
-
         st.error(
             (
                 "Invalid JSON syntax: "
@@ -2795,11 +3363,8 @@ def _render_advanced_json(
         )
 
     except Exception as exc:
-
         st.error(
-            str(
-                exc
-            )
+            str(exc)
         )
 
 
@@ -2819,26 +3384,19 @@ def render(
         "Claim Analysis",
         (
             "Analyze an individual health-insurance claim "
-            "using automatic historical enrichment and "
-            "the deployed fraud-risk model."
+            "using automatic historical enrichment, deployed "
+            "fraud-risk scoring and local TreeSHAP explainability."
         ),
     )
 
-    # -------------------------------------------------------------------------
-    # Page controls
-    # -------------------------------------------------------------------------
-
-    left, right = (
-        st.columns(
-            [
-                4,
-                1,
-            ]
-        )
+    left, right = st.columns(
+        [
+            4,
+            1,
+        ]
     )
 
     with left:
-
         st.caption(
             (
                 "Smart Analysis minimizes manual input: "
@@ -2849,53 +3407,38 @@ def render(
         )
 
     with right:
-
         if st.button(
             "Reset Analysis",
             use_container_width=True,
             key="reset_claim_analysis",
         ):
-
             _reset_analysis()
-
             st.rerun()
 
     st.write("")
 
-    # -------------------------------------------------------------------------
-    # Analysis modes
-    # -------------------------------------------------------------------------
-
-    smart_tab, demo_tab, json_tab = (
-        st.tabs(
-            [
-                "Smart Analysis",
-                "Quick Demo",
-                "Advanced JSON",
-            ]
-        )
+    smart_tab, demo_tab, json_tab = st.tabs(
+        [
+            "Smart Analysis",
+            "Quick Demo",
+            "Advanced JSON",
+        ]
     )
 
     with smart_tab:
-
         _render_smart_form(
             client
         )
 
     with demo_tab:
-
         _render_quick_demo(
             client
         )
 
     with json_tab:
-
         _render_advanced_json(
             client
         )
 
-    # -------------------------------------------------------------------------
-    # Persistent assessment
-    # -------------------------------------------------------------------------
-
+    # Persistent assessment survives Streamlit reruns.
     _render_assessment()

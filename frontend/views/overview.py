@@ -14,8 +14,11 @@ import streamlit as st
 from components import (
     human_review_notice,
     info_panel,
+    key_value_row,
     metric_card,
+    mini_metric,
     section_header,
+    status_badge,
 )
 
 from utils.formatting import (
@@ -30,66 +33,103 @@ from utils.formatting import (
 
 DEFAULT_REVIEW_FRACTION = 0.03
 
+MAX_RISK_DRIVERS = 8
+
 
 # =============================================================================
 # Project / artifact resolution
 # =============================================================================
 
 
-MODULE_PATH = Path(__file__).resolve()
+MODULE_PATH = Path(
+    __file__
+).resolve()
 
-PROJECT_ROOT = MODULE_PATH.parents[2]
+PROJECT_ROOT = (
+    MODULE_PATH.parents[2]
+)
 
 
 def _candidate_artifact_roots() -> list[Path]:
     """
-    Resolve artifacts consistently across:
-    - local development
-    - GitHub Codespaces
-    - Docker frontend container
-    - explicit ARTIFACTS_ROOT configuration
+    Resolve artifact roots consistently across:
+
+    - local development;
+    - GitHub Codespaces;
+    - Docker frontend runtime;
+    - explicit ARTIFACTS_ROOT configuration.
     """
 
-    candidates: list[Path] = []
+    candidates: list[
+        Path
+    ] = []
 
-    configured = os.getenv(
-        "ARTIFACTS_ROOT"
+    configured = (
+        os.getenv(
+            "ARTIFACTS_ROOT"
+        )
     )
 
     if configured:
+
         candidates.append(
-            Path(configured)
+            Path(
+                configured
+            )
             .expanduser()
             .resolve()
         )
 
     candidates.extend(
         [
-            PROJECT_ROOT / "artifacts",
-            Path("/app/artifacts"),
-            Path.cwd() / "artifacts",
+            PROJECT_ROOT
+            / "artifacts",
+
+            Path(
+                "/app/artifacts"
+            ),
+
+            Path.cwd()
+            / "artifacts",
         ]
     )
 
-    unique: list[Path] = []
-    seen: set[str] = set()
+    unique: list[
+        Path
+    ] = []
+
+    seen: set[
+        str
+    ] = set()
 
     for path in candidates:
 
-        key = str(path)
+        key = str(
+            path
+        )
 
         if key in seen:
             continue
 
-        seen.add(key)
-        unique.append(path)
+        seen.add(
+            key
+        )
+
+        unique.append(
+            path
+        )
 
     return unique
 
 
 def _find_artifact_root() -> Path | None:
+    """
+    Return the first existing artifact root.
+    """
 
-    for path in _candidate_artifact_roots():
+    for path in (
+        _candidate_artifact_roots()
+    ):
 
         if (
             path.exists()
@@ -100,23 +140,30 @@ def _find_artifact_root() -> Path | None:
     return None
 
 
-ARTIFACTS_DIR = _find_artifact_root()
+ARTIFACTS_DIR = (
+    _find_artifact_root()
+)
 
 
 def _artifact_path(
     *parts: str,
 ) -> Path | None:
+    """
+    Resolve one artifact path relative to the detected root.
+    """
 
     if ARTIFACTS_DIR is None:
         return None
 
-    return ARTIFACTS_DIR.joinpath(
-        *parts
+    return (
+        ARTIFACTS_DIR.joinpath(
+            *parts
+        )
     )
 
 
 # =============================================================================
-# Cached loading
+# Cached artifact loading
 # =============================================================================
 
 
@@ -126,8 +173,13 @@ def _artifact_path(
 def _read_json(
     path_string: str,
 ) -> dict[str, Any]:
+    """
+    Read one dictionary JSON artifact safely.
+    """
 
-    path = Path(path_string)
+    path = Path(
+        path_string
+    )
 
     if not path.exists():
         return {}
@@ -139,12 +191,17 @@ def _read_json(
             encoding="utf-8",
         ) as file:
 
-            payload = json.load(file)
+            payload = (
+                json.load(
+                    file
+                )
+            )
 
     except (
         OSError,
         json.JSONDecodeError,
     ):
+
         return {}
 
     if not isinstance(
@@ -162,23 +219,32 @@ def _read_json(
 def _read_csv(
     path_string: str,
 ) -> pd.DataFrame:
+    """
+    Read one analytical CSV artifact safely.
+    """
 
-    path = Path(path_string)
+    path = Path(
+        path_string
+    )
 
     if not path.exists():
         return pd.DataFrame()
 
     try:
 
-        frame = pd.read_csv(path)
+        return pd.read_csv(
+            path
+        )
 
     except Exception:
-        return pd.DataFrame()
 
-    return frame
+        return pd.DataFrame()
 
 
 def _load_metadata() -> dict[str, Any]:
+    """
+    Load frozen model metadata.
+    """
 
     path = _artifact_path(
         "metadata",
@@ -189,13 +255,18 @@ def _load_metadata() -> dict[str, Any]:
         return {}
 
     return _read_json(
-        str(path)
+        str(
+            path
+        )
     )
 
 
 def _load_artifact_csv(
     *parts: str,
 ) -> pd.DataFrame:
+    """
+    Load one CSV relative to the artifact root.
+    """
 
     path = _artifact_path(
         *parts
@@ -205,7 +276,9 @@ def _load_artifact_csv(
         return pd.DataFrame()
 
     return _read_csv(
-        str(path)
+        str(
+            path
+        )
     )
 
 
@@ -217,12 +290,19 @@ def _load_artifact_csv(
 def _safe_float(
     value: Any,
 ) -> float | None:
+    """
+    Convert a value into a finite float.
+    """
 
     try:
 
-        result = float(value)
+        result = float(
+            value
+        )
 
-        if np.isfinite(result):
+        if np.isfinite(
+            result
+        ):
             return result
 
     except (
@@ -237,14 +317,23 @@ def _safe_float(
 def _safe_int(
     value: Any,
 ) -> int | None:
+    """
+    Convert a numeric-like value to integer.
+    """
 
-    result = _safe_float(value)
+    result = (
+        _safe_float(
+            value
+        )
+    )
 
     if result is None:
         return None
 
     return int(
-        round(result)
+        round(
+            result
+        )
     )
 
 
@@ -252,51 +341,86 @@ def _metric_number(
     value: Any,
     digits: int = 4,
 ) -> str:
+    """
+    Format a numerical KPI.
+    """
 
-    result = _safe_float(value)
+    result = (
+        _safe_float(
+            value
+        )
+    )
 
     if result is None:
         return "—"
 
-    return f"{result:.{digits}f}"
+    return (
+        f"{result:.{digits}f}"
+    )
 
 
 def _metric_percent(
     value: Any,
     digits: int = 2,
 ) -> str:
+    """
+    Format a fraction as percentage.
+    """
 
-    result = _safe_float(value)
+    result = (
+        _safe_float(
+            value
+        )
+    )
 
     if result is None:
         return "—"
 
-    return f"{result:.{digits}%}"
+    return (
+        f"{result:.{digits}%}"
+    )
 
 
 def _metric_multiplier(
     value: Any,
     digits: int = 2,
 ) -> str:
+    """
+    Format a lift-like multiplier.
+    """
 
-    result = _safe_float(value)
+    result = (
+        _safe_float(
+            value
+        )
+    )
 
     if result is None:
         return "—"
 
-    return f"{result:.{digits}f}×"
+    return (
+        f"{result:.{digits}f}×"
+    )
 
 
 def _pretty_feature(
     value: Any,
 ) -> str:
+    """
+    Convert a technical variable name into a readable label.
+    """
 
     if value is None:
         return "—"
 
     return (
-        str(value)
-        .replace("_", " ")
+        str(
+            value
+        )
+        .replace(
+            "_",
+            " ",
+        )
         .strip()
         .title()
     )
@@ -305,9 +429,14 @@ def _pretty_feature(
 def _extract_metrics(
     metadata: dict[str, Any],
 ) -> dict[str, Any]:
+    """
+    Return the frozen test-metric dictionary.
+    """
 
-    metrics = metadata.get(
-        "final_test_metrics"
+    metrics = (
+        metadata.get(
+            "final_test_metrics"
+        )
     )
 
     if isinstance(
@@ -319,19 +448,33 @@ def _extract_metrics(
     return {}
 
 
+# =============================================================================
+# Review policy
+# =============================================================================
+
+
 def _review_fraction(
     metadata: dict[str, Any],
     runtime_model: dict[str, Any] | None = None,
 ) -> float:
+    """
+    Resolve operational review capacity.
 
-    # Runtime contract has priority.
+    Priority:
+        1. deployed runtime contract;
+        2. frozen artifact metadata;
+        3. application default.
+    """
+
     if isinstance(
         runtime_model,
         dict,
     ):
 
-        policy = runtime_model.get(
-            "review_policy"
+        policy = (
+            runtime_model.get(
+                "review_policy"
+            )
         )
 
         if isinstance(
@@ -340,7 +483,9 @@ def _review_fraction(
         ):
 
             value = _safe_float(
-                policy.get("fraction")
+                policy.get(
+                    "fraction"
+                )
             )
 
             if (
@@ -360,7 +505,9 @@ def _review_fraction(
     ):
 
         value = _safe_float(
-            policy.get("fraction")
+            policy.get(
+                "fraction"
+            )
         )
 
         if (
@@ -369,7 +516,80 @@ def _review_fraction(
         ):
             return value
 
-    return DEFAULT_REVIEW_FRACTION
+    return (
+        DEFAULT_REVIEW_FRACTION
+    )
+
+
+def _capacity_metric_suffix(
+    fraction: float,
+) -> str:
+    """
+    Convert capacity fraction into the metric-key suffix used by artifacts.
+
+    Examples
+    --------
+    0.03 -> 3pct
+    0.05 -> 5pct
+    0.025 -> 2_5pct
+    """
+
+    percent = (
+        fraction
+        * 100
+    )
+
+    if float(
+        percent
+    ).is_integer():
+
+        return (
+            f"{int(percent)}pct"
+        )
+
+    text = (
+        f"{percent:.6f}"
+        .rstrip("0")
+        .rstrip(".")
+        .replace(
+            ".",
+            "_",
+        )
+    )
+
+    return (
+        f"{text}pct"
+    )
+
+
+def _capacity_metric(
+    metrics: dict[str, Any],
+    metric_name: str,
+    fraction: float,
+) -> Any:
+    """
+    Read a capacity-dependent metric without mislabelling it.
+
+    Example:
+        review_fraction=0.05
+        -> recall_at_5pct
+
+    No value from a different review capacity is silently substituted.
+    """
+
+    suffix = (
+        _capacity_metric_suffix(
+            fraction
+        )
+    )
+
+    key = (
+        f"{metric_name}_at_{suffix}"
+    )
+
+    return metrics.get(
+        key
+    )
 
 
 # =============================================================================
@@ -385,16 +605,18 @@ def _read_runtime_system(
     str | None,
 ]:
     """
-    Read health + deployed model contract once.
-
-    This prevents the Overview page from making several
-    redundant API calls during one render.
+    Read health and deployed model contract once per render.
     """
 
     try:
 
-        health = client.health()
-        model = client.model_info()
+        health = (
+            client.health()
+        )
+
+        model = (
+            client.model_info()
+        )
 
         if not isinstance(
             health,
@@ -419,18 +641,23 @@ def _read_runtime_system(
         return (
             {},
             {},
-            str(exc),
+            str(
+                exc
+            ),
         )
 
 
 # =============================================================================
-# Metadata / artifact status
+# Metadata / artifact notice
 # =============================================================================
 
 
 def _render_metadata_notice(
     metadata: dict[str, Any],
 ) -> None:
+    """
+    Surface analytical artifact availability.
+    """
 
     if metadata:
         return
@@ -468,18 +695,30 @@ def _render_executive_kpis(
     metadata: dict[str, Any],
     runtime_model: dict[str, Any],
 ) -> None:
+    """
+    Render out-of-time model performance.
+    """
 
-    metrics = _extract_metrics(
-        metadata
+    metrics = (
+        _extract_metrics(
+            metadata
+        )
     )
 
-    review_fraction = _review_fraction(
-        metadata,
-        runtime_model,
+    review_fraction = (
+        _review_fraction(
+            metadata,
+            runtime_model,
+        )
     )
 
     review_label = (
-        f"{review_fraction:.0%}"
+        f"{review_fraction:.1%}"
+        if (
+            review_fraction
+            * 100
+        ) % 1
+        else f"{review_fraction:.0%}"
     )
 
     section_header(
@@ -504,7 +743,43 @@ def _render_executive_kpis(
 
         return
 
-    c1, c2, c3, c4 = st.columns(4)
+    recall = (
+        _capacity_metric(
+            metrics,
+            "recall",
+            review_fraction,
+        )
+    )
+
+    lift = (
+        _capacity_metric(
+            metrics,
+            "lift",
+            review_fraction,
+        )
+    )
+
+    precision = (
+        _capacity_metric(
+            metrics,
+            "precision",
+            review_fraction,
+        )
+    )
+
+    fraud_amount_capture = (
+        _capacity_metric(
+            metrics,
+            "fraud_amount_capture",
+            review_fraction,
+        )
+    )
+
+    c1, c2, c3, c4 = (
+        st.columns(
+            4
+        )
+    )
 
     with c1:
 
@@ -539,13 +814,19 @@ def _render_executive_kpis(
         metric_card(
             f"Recall @ {review_label}",
             _metric_percent(
-                metrics.get(
-                    "recall_at_3pct"
-                ),
+                recall,
                 2,
             ),
-            "Fraud cases captured",
-            tone="success",
+            (
+                "Fraud cases captured"
+                if recall is not None
+                else "Metric unavailable at this capacity"
+            ),
+            tone=(
+                "success"
+                if recall is not None
+                else "neutral"
+            ),
         )
 
     with c4:
@@ -553,31 +834,47 @@ def _render_executive_kpis(
         metric_card(
             f"Lift @ {review_label}",
             _metric_multiplier(
-                metrics.get(
-                    "lift_at_3pct"
-                ),
+                lift,
                 2,
             ),
-            "Versus untargeted review",
-            tone="success",
+            (
+                "Versus untargeted review"
+                if lift is not None
+                else "Metric unavailable at this capacity"
+            ),
+            tone=(
+                "success"
+                if lift is not None
+                else "neutral"
+            ),
         )
 
     st.write("")
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3 = (
+        st.columns(
+            3
+        )
+    )
 
     with c1:
 
         metric_card(
             f"Precision @ {review_label}",
             _metric_percent(
-                metrics.get(
-                    "precision_at_3pct"
-                ),
+                precision,
                 2,
             ),
-            "Investigation yield",
-            tone="info",
+            (
+                "Investigation yield"
+                if precision is not None
+                else "Metric unavailable at this capacity"
+            ),
+            tone=(
+                "info"
+                if precision is not None
+                else "neutral"
+            ),
         )
 
     with c2:
@@ -585,27 +882,35 @@ def _render_executive_kpis(
         metric_card(
             "Fraud Amount Captured",
             _metric_percent(
-                metrics.get(
-                    "fraud_amount_capture_at_3pct"
-                ),
+                fraud_amount_capture,
                 2,
             ),
             (
                 f"At {review_label} review capacity"
+                if fraud_amount_capture is not None
+                else "Metric unavailable at this capacity"
             ),
-            tone="success",
+            tone=(
+                "success"
+                if fraud_amount_capture is not None
+                else "neutral"
+            ),
         )
 
     with c3:
 
-        prevalence = metrics.get(
-            "test_fraud_prevalence"
+        prevalence = (
+            metrics.get(
+                "test_fraud_prevalence"
+            )
         )
 
         if prevalence is None:
 
-            prevalence = metadata.get(
-                "test_fraud_prevalence"
+            prevalence = (
+                metadata.get(
+                    "test_fraud_prevalence"
+                )
             )
 
         metric_card(
@@ -620,14 +925,36 @@ def _render_executive_kpis(
 
     st.write("")
 
+    if any(
+        value is None
+        for value in (
+            recall,
+            lift,
+            precision,
+            fraud_amount_capture,
+        )
+    ):
+
+        info_panel(
+            "Capacity-Specific Metrics",
+            (
+                f"The operational review policy is currently "
+                f"{review_label}. Metrics from another review capacity "
+                "are not substituted or relabelled. Missing values "
+                "therefore remain explicitly unavailable."
+            ),
+            tone="warning",
+        )
+
+        st.write("")
+
     info_panel(
         "Operational Interpretation",
         (
-            "The model is used primarily as a ranking system. "
-            "At constrained investigation capacity, recall, "
-            "precision, lift and fraud-amount capture are more "
-            "operationally informative than a standalone "
-            "classification threshold."
+            "The deployed model is primarily a ranking system. "
+            "At constrained investigation capacity, recall, precision, "
+            "lift and fraud-amount capture are more operationally "
+            "informative than a standalone classification threshold."
         ),
         tone="info",
     )
@@ -641,6 +968,9 @@ def _render_executive_kpis(
 def _capacity_candidates() -> list[
     tuple[str, ...]
 ]:
+    """
+    Candidate locations for the frozen capacity curve.
+    """
 
     return [
         (
@@ -667,18 +997,27 @@ def _load_capacity_data() -> tuple[
     pd.DataFrame,
     str | None,
 ]:
+    """
+    Load the first available capacity-curve artifact.
+    """
 
-    for parts in _capacity_candidates():
+    for parts in (
+        _capacity_candidates()
+    ):
 
-        frame = _load_artifact_csv(
-            *parts
+        frame = (
+            _load_artifact_csv(
+                *parts
+            )
         )
 
         if not frame.empty:
 
             return (
                 frame,
-                "/".join(parts),
+                "/".join(
+                    parts
+                ),
             )
 
     return (
@@ -690,11 +1029,16 @@ def _load_capacity_data() -> tuple[
 def _normalize_capacity_data(
     frame: pd.DataFrame,
 ) -> pd.DataFrame:
+    """
+    Normalize supported capacity-curve schemas.
+    """
 
     if frame.empty:
         return pd.DataFrame()
 
-    data = frame.copy()
+    data = (
+        frame.copy()
+    )
 
     rename_map = {
         "review_fraction":
@@ -722,8 +1066,10 @@ def _normalize_capacity_data(
             "Fraud Amount Capture",
     }
 
-    data = data.rename(
-        columns=rename_map
+    data = (
+        data.rename(
+            columns=rename_map
+        )
     )
 
     required = {
@@ -735,44 +1081,66 @@ def _normalize_capacity_data(
     if not required.issubset(
         data.columns
     ):
+
         return pd.DataFrame()
 
     for column in required:
 
-        data[column] = pd.to_numeric(
-            data[column],
+        data[
+            column
+        ] = pd.to_numeric(
+            data[
+                column
+            ],
             errors="coerce",
         )
 
     data = (
         data
         .dropna(
-            subset=list(required)
+            subset=list(
+                required
+            )
         )
         .loc[
-            lambda frame:
+            lambda current:
                 (
-                    frame["capacity"]
-                    .between(0, 1)
+                    current[
+                        "capacity"
+                    ]
+                    .between(
+                        0,
+                        1,
+                    )
                 )
                 &
                 (
-                    frame["Recall"]
-                    .between(0, 1)
+                    current[
+                        "Recall"
+                    ]
+                    .between(
+                        0,
+                        1,
+                    )
                 )
                 &
                 (
-                    frame[
+                    current[
                         "Fraud Amount Capture"
                     ]
-                    .between(0, 1)
+                    .between(
+                        0,
+                        1,
+                    )
                 )
         ]
         .sort_values(
             "capacity"
         )
         .drop_duplicates(
-            subset=["capacity"]
+            subset=[
+                "capacity"
+            ]
         )
         .reset_index(
             drop=True
@@ -786,10 +1154,15 @@ def _render_capacity_chart(
     metadata: dict[str, Any],
     runtime_model: dict[str, Any],
 ) -> None:
+    """
+    Render real investigation-capacity behavior.
+    """
 
-    review_fraction = _review_fraction(
-        metadata,
-        runtime_model,
+    review_fraction = (
+        _review_fraction(
+            metadata,
+            runtime_model,
+        )
     )
 
     section_header(
@@ -801,10 +1174,14 @@ def _render_capacity_chart(
         eyebrow="OPERATIONAL POLICY",
     )
 
-    raw_data, source = _load_capacity_data()
+    raw_data, source = (
+        _load_capacity_data()
+    )
 
-    data = _normalize_capacity_data(
-        raw_data
+    data = (
+        _normalize_capacity_data(
+            raw_data
+        )
     )
 
     if data.empty:
@@ -837,6 +1214,16 @@ def _render_capacity_chart(
         )
     )
 
+    maximum_capacity = max(
+        float(
+            data[
+                "capacity"
+            ]
+            .max()
+        ),
+        review_fraction,
+    )
+
     lines = (
         alt.Chart(
             chart_data
@@ -848,22 +1235,16 @@ def _render_capacity_chart(
         .encode(
             x=alt.X(
                 "capacity:Q",
-                title="Investigation Capacity",
+                title=(
+                    "Investigation Capacity"
+                ),
                 axis=alt.Axis(
                     format=".1%",
                 ),
                 scale=alt.Scale(
                     domain=[
                         0,
-                        max(
-                            float(
-                                data[
-                                    "capacity"
-                                ]
-                                .max()
-                            ),
-                            review_fraction,
-                        ),
+                        maximum_capacity,
                     ],
                     nice=True,
                 ),
@@ -871,7 +1252,9 @@ def _render_capacity_chart(
 
             y=alt.Y(
                 "Value:Q",
-                title="Fraud Capture",
+                title=(
+                    "Fraud Capture"
+                ),
                 axis=alt.Axis(
                     format=".0%",
                 ),
@@ -954,14 +1337,17 @@ def _render_capacity_chart(
     st.caption(
         (
             "Dashed marker: current operational review "
-            f"capacity ({review_fraction:.0%})."
+            f"capacity ({review_fraction:.1%})."
         )
     )
 
     if source:
 
         st.caption(
-            f"Artifact source: {source}"
+            (
+                "Artifact source: "
+                f"{source}"
+            )
         )
 
 
@@ -975,6 +1361,9 @@ def _render_live_system(
     model: dict[str, Any],
     runtime_error: str | None,
 ) -> None:
+    """
+    Render deployed inference-service readiness.
+    """
 
     section_header(
         "Live System",
@@ -987,29 +1376,25 @@ def _render_live_system(
 
     if runtime_error:
 
-        with st.container(
-            border=True
+        info_panel(
+            "Inference Service Offline",
+            (
+                "The analytical dashboard remains available, "
+                "but live scoring cannot currently reach the "
+                "inference API."
+            ),
+            tone="danger",
+        )
+
+        with st.expander(
+            "Technical details",
+            expanded=False,
         ):
 
-            info_panel(
-                "Inference Service Offline",
-                (
-                    "The analytical dashboard remains available, "
-                    "but live scoring cannot currently reach the "
-                    "inference API."
-                ),
-                tone="danger",
+            st.code(
+                runtime_error,
+                language=None,
             )
-
-            with st.expander(
-                "Technical details",
-                expanded=False,
-            ):
-
-                st.code(
-                    runtime_error,
-                    language=None,
-                )
 
         return
 
@@ -1020,8 +1405,10 @@ def _render_live_system(
         )
     )
 
-    model_loaded = health.get(
-        "model_loaded"
+    model_loaded = (
+        health.get(
+            "model_loaded"
+        )
     )
 
     healthy = (
@@ -1036,21 +1423,37 @@ def _render_live_system(
     if model_loaded is False:
         healthy = False
 
+    explainability = (
+        model.get(
+            "explainability"
+        )
+    )
+
+    if not isinstance(
+        explainability,
+        dict,
+    ):
+        explainability = {}
+
+    explanation_available = (
+        explainability.get(
+            "available"
+        )
+        is True
+    )
+
     with st.container(
         border=True
     ):
 
-        if healthy:
-
-            st.success(
-                "● INFERENCE SERVICE ONLINE"
-            )
-
-        else:
-
-            st.warning(
-                "● INFERENCE SERVICE REACHABLE"
-            )
+        status_badge(
+            healthy,
+            label=(
+                "INFERENCE READY"
+                if healthy
+                else "SERVICE REACHABLE"
+            ),
+        )
 
         st.caption(
             (
@@ -1061,7 +1464,11 @@ def _render_live_system(
 
         st.write("")
 
-        c1, c2 = st.columns(2)
+        c1, c2 = (
+            st.columns(
+                2
+            )
+        )
 
         with c1:
 
@@ -1093,14 +1500,20 @@ def _render_live_system(
 
         st.write("")
 
-        c1, c2 = st.columns(2)
+        c1, c2 = (
+            st.columns(
+                2
+            )
+        )
 
         with c1:
 
-            metric_card(
+            mini_metric(
                 "API Health",
                 status.upper(),
-                "Inference endpoint",
+                helper=(
+                    "Inference endpoint"
+                ),
                 tone=(
                     "success"
                     if healthy
@@ -1110,22 +1523,24 @@ def _render_live_system(
 
         with c2:
 
-            if model_loaded is None:
-
-                loaded_label = "UNKNOWN"
-
-            else:
-
-                loaded_label = (
+            loaded_label = (
+                "UNKNOWN"
+                if model_loaded is None
+                else (
                     "YES"
-                    if bool(model_loaded)
+                    if bool(
+                        model_loaded
+                    )
                     else "NO"
                 )
+            )
 
-            metric_card(
+            mini_metric(
                 "Model Loaded",
                 loaded_label,
-                "Runtime readiness",
+                helper=(
+                    "Runtime readiness"
+                ),
                 tone=(
                     "success"
                     if model_loaded is True
@@ -1139,35 +1554,77 @@ def _render_live_system(
             "##### Inference Contract"
         )
 
-        st.write(
-            (
-                "**Prediction target:** "
-                f"`{model.get('target', '—')}`"
-            )
+        key_value_row(
+            "Prediction target",
+            str(
+                model.get(
+                    "target",
+                    "—",
+                )
+            ),
+            monospace=True,
         )
 
-        st.write(
-            (
-                "**Business features:** "
-                f"{model.get('feature_count', '—')}"
-            )
+        key_value_row(
+            "Source features",
+            str(
+                model.get(
+                    "feature_count",
+                    "—",
+                )
+            ),
         )
 
-        st.write(
+        key_value_row(
+            "Transformed features",
+            str(
+                model.get(
+                    "transformed_feature_count",
+                    "—",
+                )
+            ),
+        )
+
+        key_value_row(
+            "Review policy",
+            format_review_policy(
+                model.get(
+                    "review_policy"
+                )
+            ),
+        )
+
+        key_value_row(
+            "Explainability",
             (
-                "**Review policy:** "
-                + format_review_policy(
-                    model.get(
-                        "review_policy"
+                str(
+                    explainability.get(
+                        "method",
+                        "TreeSHAP",
                     )
                 )
-            )
+                if explanation_available
+                else "Unavailable"
+            ),
         )
+
+        if explanation_available:
+
+            key_value_row(
+                "Explanation space",
+                str(
+                    explainability.get(
+                        "output_space",
+                        "—",
+                    )
+                ),
+                monospace=True,
+            )
 
         st.caption(
             (
                 "Claim Analysis and Portfolio Scoring "
-                "use this live frozen inference service."
+                "use this frozen live inference service."
             )
         )
 
@@ -1182,6 +1639,9 @@ def _render_contract_consistency(
     runtime_model: dict[str, Any],
     runtime_error: str | None,
 ) -> None:
+    """
+    Compare frozen analytical metadata against deployed runtime contract.
+    """
 
     st.write("")
     st.write("")
@@ -1237,7 +1697,11 @@ def _render_contract_consistency(
         ),
         (
             "feature_count",
-            "Feature Count",
+            "Source Feature Count",
+        ),
+        (
+            "transformed_feature_count",
+            "Transformed Feature Count",
         ),
     ]
 
@@ -1246,16 +1710,20 @@ def _render_contract_consistency(
     ] = []
 
     mismatch_count = 0
-    comparison_count = 0
+    comparable_count = 0
 
     for key, label in fields:
 
-        local_value = metadata.get(
-            key
+        local_value = (
+            metadata.get(
+                key
+            )
         )
 
-        runtime_value = runtime_model.get(
-            key
+        runtime_value = (
+            runtime_model.get(
+                key
+            )
         )
 
         if (
@@ -1264,21 +1732,27 @@ def _render_contract_consistency(
         ):
             continue
 
-        if (
-            local_value is None
-            or runtime_value is None
-        ):
+        comparable = (
+            local_value is not None
+            and runtime_value is not None
+        )
 
-            match = False
+        if comparable:
+
+            comparable_count += 1
+
+            match = (
+                str(
+                    local_value
+                )
+                == str(
+                    runtime_value
+                )
+            )
 
         else:
 
-            match = (
-                str(local_value)
-                == str(runtime_value)
-            )
-
-            comparison_count += 1
+            match = False
 
         if not match:
             mismatch_count += 1
@@ -1292,14 +1766,18 @@ def _render_contract_consistency(
                     (
                         "—"
                         if local_value is None
-                        else str(local_value)
+                        else str(
+                            local_value
+                        )
                     ),
 
                 "Runtime":
                     (
                         "—"
                         if runtime_value is None
-                        else str(runtime_value)
+                        else str(
+                            runtime_value
+                        )
                     ),
 
                 "Status":
@@ -1314,14 +1792,14 @@ def _render_contract_consistency(
     if (
         records
         and mismatch_count == 0
-        and comparison_count > 0
+        and comparable_count > 0
     ):
 
         info_panel(
             "Deployment Contract Consistent",
             (
-                "The core local model metadata matches the "
-                "model currently exposed by the inference API."
+                "The comparable frozen model metadata matches "
+                "the model currently exposed by the inference API."
             ),
             tone="success",
         )
@@ -1332,7 +1810,8 @@ def _render_contract_consistency(
             "Deployment Contract Mismatch",
             (
                 f"{mismatch_count} model-contract field(s) differ "
-                "between local artifacts and the live API."
+                "or are unavailable between local artifacts and "
+                "the live API."
             ),
             tone="warning",
         )
@@ -1395,6 +1874,9 @@ def _render_contract_consistency(
 
 
 def _render_risk_drivers() -> None:
+    """
+    Render global business-level SHAP importance.
+    """
 
     st.write("")
     st.write("")
@@ -1408,9 +1890,11 @@ def _render_risk_drivers() -> None:
         eyebrow="GLOBAL EXPLAINABILITY",
     )
 
-    importance = _load_artifact_csv(
-        "explainability",
-        "business_feature_importance.csv",
+    importance = (
+        _load_artifact_csv(
+            "explainability",
+            "business_feature_importance.csv",
+        )
     )
 
     if importance.empty:
@@ -1446,7 +1930,9 @@ def _render_risk_drivers() -> None:
 
         return
 
-    importance = importance.copy()
+    importance = (
+        importance.copy()
+    )
 
     importance[
         "mean_abs_shap"
@@ -1471,9 +1957,20 @@ def _render_risk_drivers() -> None:
             errors="coerce",
         )
 
-    importance = importance.dropna(
-        subset=[
-            "mean_abs_shap"
+    importance = (
+        importance.dropna(
+            subset=[
+                "mean_abs_shap"
+            ]
+        )
+    )
+
+    importance = (
+        importance.loc[
+            importance[
+                "mean_abs_shap"
+            ]
+            >= 0
         ]
     )
 
@@ -1493,7 +1990,7 @@ def _render_risk_drivers() -> None:
     top = (
         importance
         .nlargest(
-            8,
+            MAX_RISK_DRIVERS,
             "mean_abs_shap",
         )
         .copy()
@@ -1506,7 +2003,10 @@ def _render_risk_drivers() -> None:
         "Rank"
     ] = np.arange(
         1,
-        len(top) + 1,
+        len(
+            top
+        )
+        + 1,
     )
 
     top[
@@ -1520,12 +2020,14 @@ def _render_risk_drivers() -> None:
         )
     )
 
-    left, right = st.columns(
-        [
-            1.4,
-            1,
-        ],
-        gap="large",
+    left, right = (
+        st.columns(
+            [
+                1.4,
+                1,
+            ],
+            gap="large",
+        )
     )
 
     with left:
@@ -1636,10 +2138,11 @@ def _render_risk_drivers() -> None:
     info_panel(
         "SHAP Interpretation",
         (
-            "Mean absolute SHAP measures average influence on model "
-            "output. It does not imply causality, and the direction "
-            "of an individual claim's contribution can differ from "
-            "the global average."
+            "Mean absolute SHAP measures average predictive influence "
+            "on model output. It does not imply causality, and the "
+            "direction of an individual claim's contribution can differ "
+            "from the global average. Claim Analysis provides the local "
+            "TreeSHAP explanation for a specific claim."
         ),
         tone="info",
     )
@@ -1651,6 +2154,9 @@ def _render_risk_drivers() -> None:
 
 
 def _render_model_observations() -> None:
+    """
+    Render high-level behavior from frozen analytical artifacts.
+    """
 
     st.write("")
     st.write("")
@@ -1664,22 +2170,30 @@ def _render_model_observations() -> None:
         eyebrow="MODEL BEHAVIOR",
     )
 
-    mechanism = _load_artifact_csv(
-        "explainability",
-        "mechanism_score_summary.csv",
+    mechanism = (
+        _load_artifact_csv(
+            "explainability",
+            "mechanism_score_summary.csv",
+        )
     )
 
-    difficulty = _load_artifact_csv(
-        "explainability",
-        "difficulty_score_summary.csv",
+    difficulty = (
+        _load_artifact_csv(
+            "explainability",
+            "difficulty_score_summary.csv",
+        )
     )
 
-    missed = _load_artifact_csv(
-        "explainability",
-        "false_negative_by_mechanism.csv",
+    missed = (
+        _load_artifact_csv(
+            "explainability",
+            "false_negative_by_mechanism.csv",
+        )
     )
 
-    valid_mechanism = pd.DataFrame()
+    valid_mechanism = (
+        pd.DataFrame()
+    )
 
     if (
         not mechanism.empty
@@ -1691,7 +2205,9 @@ def _render_model_observations() -> None:
         )
     ):
 
-        valid_mechanism = mechanism.copy()
+        valid_mechanism = (
+            mechanism.copy()
+        )
 
         valid_mechanism[
             "mean_score"
@@ -1703,8 +2219,7 @@ def _render_model_observations() -> None:
         )
 
         valid_mechanism = (
-            valid_mechanism
-            .dropna(
+            valid_mechanism.dropna(
                 subset=[
                     "mean_score"
                 ]
@@ -1746,7 +2261,9 @@ def _render_model_observations() -> None:
         )
     ):
 
-        difficulty = difficulty.copy()
+        difficulty = (
+            difficulty.copy()
+        )
 
         difficulty[
             "mean_score"
@@ -1757,19 +2274,30 @@ def _render_model_observations() -> None:
             errors="coerce",
         )
 
-        hard = difficulty.loc[
-            difficulty[
-                "fraud_difficulty"
+        hard = (
+            difficulty.loc[
+                difficulty[
+                    "fraud_difficulty"
+                ]
+                .astype(str)
+                .str.lower()
+                .eq(
+                    "hard"
+                )
             ]
-            .astype(str)
-            .str.lower()
-            .eq("hard")
-        ]
+        )
 
         if not hard.empty:
-            hard_row = hard.iloc[0]
 
-    c1, c2, c3 = st.columns(3)
+            hard_row = (
+                hard.iloc[0]
+            )
+
+    c1, c2, c3 = (
+        st.columns(
+            3
+        )
+    )
 
     with c1:
 
@@ -1807,9 +2335,11 @@ def _render_model_observations() -> None:
 
         if weakest is not None:
 
-            mechanism_name = weakest[
-                "fraud_mechanism"
-            ]
+            mechanism_name = (
+                weakest[
+                    "fraud_mechanism"
+                ]
+            )
 
             caption = (
                 "Mean risk "
@@ -1831,29 +2361,36 @@ def _render_model_observations() -> None:
                 )
             ):
 
-                matching = missed.loc[
-                    missed[
-                        "fraud_mechanism"
-                    ]
-                    .astype(str)
-                    .eq(
-                        str(
-                            mechanism_name
+                matching = (
+                    missed.loc[
+                        missed[
+                            "fraud_mechanism"
+                        ]
+                        .astype(str)
+                        .eq(
+                            str(
+                                mechanism_name
+                            )
                         )
-                    )
-                ]
+                    ]
+                )
 
                 if not matching.empty:
 
-                    missed_count = _safe_int(
-                        matching
-                        .iloc[0]
-                        .get(
-                            "missed_fraud_claims"
+                    missed_count = (
+                        _safe_int(
+                            matching
+                            .iloc[0]
+                            .get(
+                                "missed_fraud_claims"
+                            )
                         )
                     )
 
-                    if missed_count is not None:
+                    if (
+                        missed_count
+                        is not None
+                    ):
 
                         caption += (
                             f" • {missed_count:,} missed"
@@ -1881,9 +2418,11 @@ def _render_model_observations() -> None:
 
         if hard_row is not None:
 
-            fraud_claims = _safe_int(
-                hard_row.get(
-                    "fraud_claims"
+            fraud_claims = (
+                _safe_int(
+                    hard_row.get(
+                        "fraud_claims"
+                    )
                 )
             )
 
@@ -1919,6 +2458,9 @@ def _render_model_observations() -> None:
 
 
 def _render_artifact_coverage() -> None:
+    """
+    Render traceability of analytical evidence.
+    """
 
     st.write("")
     st.write("")
@@ -1970,12 +2512,16 @@ def _render_artifact_coverage() -> None:
         ),
     ]
 
-    records = []
+    records: list[
+        dict[str, str]
+    ] = []
 
     for label, parts in artifact_specs:
 
-        path = _artifact_path(
-            *parts
+        path = (
+            _artifact_path(
+                *parts
+            )
         )
 
         available = (
@@ -2004,10 +2550,28 @@ def _render_artifact_coverage() -> None:
         ]
         == "AVAILABLE"
 
-        for record in records
+        for record
+        in records
     )
 
-    c1, c2 = st.columns(2)
+    total_count = (
+        len(
+            records
+        )
+    )
+
+    coverage = (
+        available_count
+        / total_count
+        if total_count
+        else 0.0
+    )
+
+    c1, c2, c3 = (
+        st.columns(
+            3
+        )
+    )
 
     with c1:
 
@@ -2015,18 +2579,31 @@ def _render_artifact_coverage() -> None:
             "Analytical Artifacts",
             (
                 f"{available_count}/"
-                f"{len(records)}"
+                f"{total_count}"
             ),
             "Core evidence available",
             tone=(
                 "success"
                 if available_count
-                == len(records)
+                == total_count
                 else "warning"
             ),
         )
 
     with c2:
+
+        metric_card(
+            "Evidence Coverage",
+            f"{coverage:.0%}",
+            "Analytical traceability",
+            tone=(
+                "success"
+                if coverage == 1
+                else "warning"
+            ),
+        )
+
+    with c3:
 
         metric_card(
             "Artifact Runtime",
@@ -2037,7 +2614,9 @@ def _render_artifact_coverage() -> None:
                 else "UNAVAILABLE"
             ),
             (
-                str(ARTIFACTS_DIR)
+                str(
+                    ARTIFACTS_DIR
+                )
                 if ARTIFACTS_DIR
                 is not None
                 else "No artifact root detected"
@@ -2070,6 +2649,9 @@ def _render_artifact_coverage() -> None:
 
 
 def _render_governance() -> None:
+    """
+    Render human-in-the-loop operating boundary.
+    """
 
     st.write("")
     st.write("")
@@ -2094,24 +2676,36 @@ def _render_governance() -> None:
 def render(
     client,
 ) -> None:
+    """
+    Render the executive fraud-intelligence overview.
+    """
 
     section_header(
         "Executive Overview",
         (
             "Fraud-risk performance, investigation capacity, "
-            "model intelligence and live inference readiness."
+            "model intelligence, explainability and live "
+            "inference readiness."
         ),
     )
 
-    metadata = _load_metadata()
+    metadata = (
+        _load_metadata()
+    )
 
     (
         health,
         runtime_model,
         runtime_error,
-    ) = _read_runtime_system(
-        client
+    ) = (
+        _read_runtime_system(
+            client
+        )
     )
+
+    # =========================================================================
+    # Artifact status
+    # =========================================================================
 
     _render_metadata_notice(
         metadata
@@ -2130,15 +2724,17 @@ def render(
     st.write("")
 
     # =========================================================================
-    # Capacity + runtime
+    # Capacity + live runtime
     # =========================================================================
 
-    left, right = st.columns(
-        [
-            1.55,
-            1,
-        ],
-        gap="large",
+    left, right = (
+        st.columns(
+            [
+                1.55,
+                1,
+            ],
+            gap="large",
+        )
     )
 
     with left:
@@ -2157,7 +2753,7 @@ def render(
         )
 
     # =========================================================================
-    # Governance consistency
+    # Deployment governance
     # =========================================================================
 
     _render_contract_consistency(
@@ -2167,19 +2763,19 @@ def render(
     )
 
     # =========================================================================
-    # Explainability
+    # Global explainability
     # =========================================================================
 
     _render_risk_drivers()
 
     # =========================================================================
-    # Risk intelligence
+    # Model behavior
     # =========================================================================
 
     _render_model_observations()
 
     # =========================================================================
-    # Evidence traceability
+    # Analytical traceability
     # =========================================================================
 
     _render_artifact_coverage()

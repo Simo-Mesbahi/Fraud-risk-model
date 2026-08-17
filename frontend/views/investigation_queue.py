@@ -5,6 +5,10 @@ from datetime import (
     timezone,
 )
 
+from time import (
+    perf_counter,
+)
+
 from typing import Any
 
 import numpy as np
@@ -15,7 +19,9 @@ from components import (
     empty_state,
     human_review_notice,
     info_panel,
+    key_value_row,
     metric_card,
+    mini_metric,
     section_header,
 )
 
@@ -32,6 +38,11 @@ from utils.formatting import (
 # =============================================================================
 # Configuration
 # =============================================================================
+
+
+MAX_QUEUE_SOURCE_SIZE = 10_000
+
+DEFAULT_REVIEW_FRACTION = 0.03
 
 
 LEAKAGE_COLUMNS = {
@@ -84,18 +95,13 @@ def _safe_float(
     default: float = 0.0,
 ) -> float:
     """
-    Convert a value to a finite float.
+    Convert numeric-like values into finite floats.
     """
 
     try:
+        result = float(value)
 
-        result = float(
-            value
-        )
-
-        if np.isfinite(
-            result
-        ):
+        if np.isfinite(result):
             return result
 
     except (
@@ -104,9 +110,7 @@ def _safe_float(
     ):
         pass
 
-    return float(
-        default
-    )
+    return float(default)
 
 
 def _safe_int(
@@ -114,22 +118,20 @@ def _safe_int(
     default: int = 0,
 ) -> int:
     """
-    Convert numeric-like values safely to integer.
+    Convert numeric-like values safely to integers.
     """
 
     try:
+        if pd.isna(value):
+            return default
 
-        if pd.isna(
-            value
-        ):
+        number = float(value)
+
+        if not np.isfinite(number):
             return default
 
         return int(
-            round(
-                float(
-                    value
-                )
-            )
+            round(number)
         )
 
     except (
@@ -139,29 +141,49 @@ def _safe_int(
         return default
 
 
-def _bounded_score(
+def _probability(
     value: Any,
+    *,
+    field: str = "probability",
 ) -> float:
     """
-    Normalize a model probability to [0, 1].
+    Require a finite probability in [0, 1].
+
+    Invalid model outputs are rejected rather than silently clipped.
     """
 
-    return min(
-        max(
-            _safe_float(
-                value
-            ),
-            0.0,
-        ),
-        1.0,
-    )
+    try:
+        result = float(value)
+
+    except (
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise ValueError(
+            f"{field} must be numeric."
+        ) from exc
+
+    if not np.isfinite(result):
+        raise ValueError(
+            f"{field} must be finite."
+        )
+
+    if not 0.0 <= result <= 1.0:
+        raise ValueError(
+            (
+                f"{field} must lie in "
+                "the interval [0, 1]."
+            )
+        )
+
+    return result
 
 
 def _format_currency(
     value: Any,
 ) -> str:
     """
-    Format a monetary value consistently.
+    Format monetary values consistently.
     """
 
     return (
@@ -179,20 +201,18 @@ def _format_identifier(
     if value is None:
         return "—"
 
-    value = str(
-        value
-    ).strip()
+    text = str(value).strip()
 
     return (
-        value
-        if value
+        text
+        if text
         else "—"
     )
 
 
 def _utc_timestamp() -> str:
     """
-    Return an auditable UTC timestamp.
+    Return an audit-friendly UTC timestamp.
     """
 
     return (
@@ -203,6 +223,26 @@ def _utc_timestamp() -> str:
             timespec="seconds"
         )
     )
+
+
+def _safe_model_value(
+    value: Any,
+) -> Any:
+    """
+    Convert pandas missing values to None for model metadata.
+    """
+
+    try:
+        if pd.isna(value):
+            return None
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        pass
+
+    return value
 
 
 # =============================================================================
@@ -218,7 +258,7 @@ def _strip_leakage(
     dict[str, Any]
 ]:
     """
-    Remove target / synthetic generation variables before inference.
+    Remove target and synthetic-generation variables before inference.
     """
 
     clean_claims: list[
@@ -231,7 +271,6 @@ def _strip_leakage(
             claim,
             dict,
         ):
-
             raise TypeError(
                 (
                     "Every portfolio item must "
@@ -241,16 +280,10 @@ def _strip_leakage(
 
         clean_claims.append(
             {
-                key:
-                    value
-
-                for (
-                    key,
-                    value,
-                ) in claim.items()
-
-                if key
-                not in LEAKAGE_COLUMNS
+                key: value
+                for key, value
+                in claim.items()
+                if key not in LEAKAGE_COLUMNS
             }
         )
 
@@ -258,7 +291,7 @@ def _strip_leakage(
 
 
 # =============================================================================
-# Operational interpretation
+# Model interpretation
 # =============================================================================
 
 
@@ -266,68 +299,51 @@ def _risk_priority(
     score: float,
 ) -> str:
     """
-    Convert model risk into an operational queue priority.
+    Translate individual model risk into operational queue priority.
 
-    Priority remains a model-driven recommendation and does not
-    represent the investigator's final decision.
+    This is a model-driven triage label, not an investigator decision.
     """
 
-    score = (
-        _bounded_score(
-            score
-        )
+    score = _probability(
+        score,
+        field="fraud_risk_score",
     )
 
     if score >= 0.50:
-
-        return (
-            "P1 — Immediate"
-        )
+        return "P1 — Immediate"
 
     if score >= 0.20:
-
-        return (
-            "P2 — High"
-        )
+        return "P2 — High"
 
     if score >= 0.05:
+        return "P3 — Standard"
 
-        return (
-            "P3 — Standard"
-        )
-
-    return (
-        "P4 — Monitor"
-    )
+    return "P4 — Monitor"
 
 
 def _model_recommendation(
     score: float,
 ) -> str:
     """
-    Human-readable recommendation generated from model risk.
+    Generate a human-readable model recommendation.
     """
 
-    score = (
-        _bounded_score(
-            score
-        )
+    score = _probability(
+        score,
+        field="fraud_risk_score",
     )
 
     if score >= 0.50:
-
         return (
             "Immediate investigator review"
         )
 
     if score >= 0.20:
-
         return (
             "Investigator review recommended"
         )
 
     if score >= 0.05:
-
         return (
             "Review if capacity allows"
         )
@@ -341,22 +357,73 @@ def _priority_tone(
     priority: str,
 ) -> str:
     """
-    Return design tone for reusable metric cards.
+    Return the design-system tone associated with a queue priority.
     """
 
     if priority == "P1 — Immediate":
-
         return "danger"
 
     if priority == "P2 — High":
-
         return "warning"
 
     if priority == "P3 — Standard":
-
         return "info"
 
     return "success"
+
+
+# =============================================================================
+# Runtime contract
+# =============================================================================
+
+
+def _runtime_model_info(
+    client,
+) -> dict[str, Any]:
+    """
+    Retrieve deployed model metadata without blocking queue generation.
+    """
+
+    try:
+        payload = client.model_info()
+
+        if isinstance(
+            payload,
+            dict,
+        ):
+            return payload
+
+    except Exception:
+        pass
+
+    return {}
+
+
+def _runtime_review_fraction(
+    model_info: dict[str, Any],
+) -> float:
+    """
+    Resolve the deployed default review policy.
+    """
+
+    policy = model_info.get(
+        "review_policy",
+        {},
+    )
+
+    if isinstance(
+        policy,
+        dict,
+    ):
+        value = _safe_float(
+            policy.get("fraction"),
+            default=-1.0,
+        )
+
+        if 0 < value <= 1:
+            return value
+
+    return DEFAULT_REVIEW_FRACTION
 
 
 # =============================================================================
@@ -366,7 +433,9 @@ def _priority_tone(
 
 def _initialize_queue_state() -> None:
     """
-    Initialize all queue-specific state.
+    Initialize queue workflow state.
+
+    Compatible with the global application state contract.
     """
 
     defaults = {
@@ -395,48 +464,44 @@ def _initialize_queue_state() -> None:
             None,
     }
 
-    for (
-        key,
-        value,
-    ) in defaults.items():
+    for key, value in defaults.items():
 
-        if key not in (
-            st.session_state
-        ):
+        if key not in st.session_state:
 
-            st.session_state[
-                key
-            ] = value.copy() if isinstance(
-                value,
-                dict,
-            ) else value
+            st.session_state[key] = (
+                value.copy()
+                if isinstance(
+                    value,
+                    dict,
+                )
+                else value
+            )
 
 
 def _reset_queue() -> None:
     """
-    Reset queue state and queue-specific widgets.
+    Reset queue data and queue-specific widgets.
     """
 
     st.session_state.queue_results = None
     st.session_state.queue_metadata = None
     st.session_state.queue_source_claims = None
     st.session_state.queue_source_name = None
+
     st.session_state.queue_human_decisions = {}
     st.session_state.queue_human_notes = {}
     st.session_state.queue_decision_timestamps = {}
+
     st.session_state.queue_selected_claim_id = None
 
     for key in QUEUE_WIDGET_KEYS:
 
         if key in st.session_state:
-
-            del st.session_state[
-                key
-            ]
+            del st.session_state[key]
 
 
 # =============================================================================
-# Portfolio preparation
+# Portfolio validation
 # =============================================================================
 
 
@@ -450,20 +515,47 @@ def _claims_to_frame(
     """
 
     if not claims:
-
-        return pd.DataFrame()
-
-    frame = (
-        pd.DataFrame(
-            claims
+        raise ValueError(
+            "Portfolio contains no claims."
         )
+
+    if len(claims) > MAX_QUEUE_SOURCE_SIZE:
+        raise ValueError(
+            (
+                f"Portfolio contains {len(claims):,} claims. "
+                f"The queue API supports at most "
+                f"{MAX_QUEUE_SOURCE_SIZE:,} claims."
+            )
+        )
+
+    invalid = [
+        index
+        for index, claim
+        in enumerate(claims)
+        if not isinstance(
+            claim,
+            dict,
+        )
+    ]
+
+    if invalid:
+        raise TypeError(
+            (
+                f"{len(invalid):,} portfolio row(s) "
+                "are not claim objects."
+            )
+        )
+
+    frame = pd.DataFrame(
+        claims
     )
 
-    if (
-        "claim_id"
-        not in frame.columns
-    ):
+    if frame.empty:
+        raise ValueError(
+            "Portfolio contains no usable rows."
+        )
 
+    if "claim_id" not in frame.columns:
         raise ValueError(
             (
                 "The portfolio must contain "
@@ -471,35 +563,34 @@ def _claims_to_frame(
             )
         )
 
-    frame[
-        "claim_id"
-    ] = (
-        frame[
-            "claim_id"
-        ]
+    frame["claim_id"] = (
+        frame["claim_id"]
         .astype(str)
         .str.strip()
     )
 
-    if (
-        frame[
-            "claim_id"
-        ]
-        .eq("")
-        .any()
-    ):
+    invalid_ids = (
+        frame["claim_id"]
+        .isin(
+            [
+                "",
+                "nan",
+                "None",
+                "<NA>",
+            ]
+        )
+    )
 
+    if invalid_ids.any():
         raise ValueError(
             (
                 "Portfolio contains one or more "
-                "empty claim identifiers."
+                "missing claim identifiers."
             )
         )
 
     duplicated = (
-        frame[
-            "claim_id"
-        ]
+        frame["claim_id"]
         .duplicated(
             keep=False
         )
@@ -512,15 +603,12 @@ def _claims_to_frame(
                 duplicated,
                 "claim_id",
             ]
-            .astype(str)
             .unique()
             .tolist()
         )
 
-        preview = (
-            ", ".join(
-                duplicates[:5]
-            )
+        preview = ", ".join(
+            duplicates[:5]
         )
 
         raise ValueError(
@@ -535,161 +623,327 @@ def _claims_to_frame(
 
 
 # =============================================================================
-# Prediction validation
+# /top-review response validation
 # =============================================================================
 
 
 def _validate_predictions(
     predictions: pd.DataFrame,
+    *,
+    expected_claim_ids: set[str],
+    review_fraction: float,
 ) -> pd.DataFrame:
     """
-    Validate and normalize /top-review model output.
+    Validate the selected population returned by /top-review.
     """
+
+    if predictions.empty:
+        raise RuntimeError(
+            (
+                "The model returned an empty "
+                "investigation queue."
+            )
+        )
 
     required = {
         "claim_id",
         "fraud_risk_score",
+        "risk_rank",
+        "risk_percentile",
+        "review_fraction",
+        "selected_for_review",
     }
 
     missing = (
         required
-        - set(
-            predictions.columns
-        )
+        - set(predictions.columns)
     )
 
     if missing:
-
         raise RuntimeError(
             (
                 "Queue response is missing required "
                 "prediction fields: "
                 + ", ".join(
-                    sorted(
-                        missing
-                    )
+                    sorted(missing)
                 )
             )
         )
 
-    frame = (
-        predictions.copy()
-    )
+    frame = predictions.copy()
 
-    frame[
-        "claim_id"
-    ] = (
-        frame[
-            "claim_id"
-        ]
+    # -------------------------------------------------------------------------
+    # Claim identity
+    # -------------------------------------------------------------------------
+
+    frame["claim_id"] = (
+        frame["claim_id"]
         .astype(str)
         .str.strip()
     )
 
-    frame[
-        "fraud_risk_score"
-    ] = (
-        pd.to_numeric(
-            frame[
-                "fraud_risk_score"
-            ],
-            errors="coerce",
-        )
+    invalid_ids = frame["claim_id"].isin(
+        [
+            "",
+            "nan",
+            "None",
+            "<NA>",
+        ]
     )
 
+    if invalid_ids.any():
+        raise RuntimeError(
+            (
+                "Queue response contains one or "
+                "more invalid claim IDs."
+            )
+        )
+
     if (
-        frame[
-            "fraud_risk_score"
-        ]
-        .isna()
+        frame["claim_id"]
+        .duplicated()
         .any()
     ):
-
         raise RuntimeError(
             (
                 "Queue response contains "
-                "invalid fraud-risk scores."
+                "duplicate claim IDs."
             )
         )
+
+    returned_ids = set(
+        frame["claim_id"]
+        .tolist()
+    )
+
+    unexpected_ids = (
+        returned_ids
+        - expected_claim_ids
+    )
+
+    if unexpected_ids:
+        examples = ", ".join(
+            sorted(
+                unexpected_ids
+            )[:5]
+        )
+
+        raise RuntimeError(
+            (
+                "Queue API returned claim IDs that "
+                "were not present in the source portfolio. "
+                f"Examples: {examples}"
+            )
+        )
+
+    # -------------------------------------------------------------------------
+    # Scores
+    # -------------------------------------------------------------------------
 
     frame[
         "fraud_risk_score"
-    ] = (
-        frame[
-            "fraud_risk_score"
-        ]
-        .clip(
-            lower=0.0,
-            upper=1.0,
-        )
+    ] = pd.to_numeric(
+        frame["fraud_risk_score"],
+        errors="coerce",
     )
 
     if (
-        "risk_rank"
-        not in frame.columns
+        frame["fraud_risk_score"]
+        .isna()
+        .any()
     ):
-
-        frame = (
-            frame
-            .sort_values(
-                "fraud_risk_score",
-                ascending=False,
-            )
-            .reset_index(
-                drop=True
+        raise RuntimeError(
+            (
+                "Queue response contains invalid "
+                "fraud-risk scores."
             )
         )
 
-        frame[
-            "risk_rank"
-        ] = (
-            np.arange(
-                1,
-                len(
-                    frame
-                )
-                + 1,
+    scores = frame[
+        "fraud_risk_score"
+    ].to_numpy(
+        dtype=float
+    )
+
+    if not np.isfinite(scores).all():
+        raise RuntimeError(
+            (
+                "Queue response contains "
+                "non-finite fraud-risk scores."
             )
         )
 
-    else:
-
-        frame[
-            "risk_rank"
-        ] = (
-            pd.to_numeric(
-                frame[
-                    "risk_rank"
-                ],
-                errors="coerce",
+    if (
+        (scores < 0)
+        | (scores > 1)
+    ).any():
+        raise RuntimeError(
+            (
+                "Queue response contains fraud-risk "
+                "scores outside [0, 1]."
             )
         )
 
-        if (
-            frame[
-                "risk_rank"
-            ]
-            .isna()
-            .any()
-        ):
+    # -------------------------------------------------------------------------
+    # Ranks
+    # -------------------------------------------------------------------------
 
-            raise RuntimeError(
-                (
-                    "Queue response contains "
-                    "invalid risk ranks."
-                )
+    frame[
+        "risk_rank"
+    ] = pd.to_numeric(
+        frame["risk_rank"],
+        errors="coerce",
+    )
+
+    if (
+        frame["risk_rank"]
+        .isna()
+        .any()
+    ):
+        raise RuntimeError(
+            (
+                "Queue response contains "
+                "invalid risk ranks."
             )
-
-        frame[
-            "risk_rank"
-        ] = (
-            frame[
-                "risk_rank"
-            ]
-            .astype(int)
         )
 
-    return (
+    ranks = frame[
+        "risk_rank"
+    ].to_numpy(
+        dtype=float
+    )
+
+    if not np.all(
+        ranks
+        == np.floor(ranks)
+    ):
+        raise RuntimeError(
+            (
+                "Queue risk_rank values "
+                "must be integers."
+            )
+        )
+
+    frame["risk_rank"] = (
+        frame["risk_rank"]
+        .astype(int)
+    )
+
+    expected_ranks = list(
+        range(
+            1,
+            len(frame) + 1,
+        )
+    )
+
+    sorted_ranks = sorted(
+        frame["risk_rank"]
+        .tolist()
+    )
+
+    if sorted_ranks != expected_ranks:
+        raise RuntimeError(
+            (
+                "Queue risk ranks must form a "
+                "continuous sequence starting at 1."
+            )
+        )
+
+    # -------------------------------------------------------------------------
+    # Percentiles
+    # -------------------------------------------------------------------------
+
+    frame[
+        "risk_percentile"
+    ] = pd.to_numeric(
+        frame["risk_percentile"],
+        errors="coerce",
+    )
+
+    if (
+        frame["risk_percentile"]
+        .isna()
+        .any()
+    ):
+        raise RuntimeError(
+            (
+                "Queue response contains invalid "
+                "risk percentiles."
+            )
+        )
+
+    percentiles = frame[
+        "risk_percentile"
+    ].to_numpy(
+        dtype=float
+    )
+
+    if (
+        (~np.isfinite(percentiles))
+        |
+        (percentiles <= 0)
+        |
+        (percentiles > 1)
+    ).any():
+        raise RuntimeError(
+            (
+                "risk_percentile must lie "
+                "in the interval (0, 1]."
+            )
+        )
+
+    # -------------------------------------------------------------------------
+    # Review-policy consistency
+    # -------------------------------------------------------------------------
+
+    returned_fraction = pd.to_numeric(
+        frame["review_fraction"],
+        errors="coerce",
+    )
+
+    if returned_fraction.isna().any():
+        raise RuntimeError(
+            (
+                "Queue response contains invalid "
+                "review_fraction values."
+            )
+        )
+
+    if not np.allclose(
+        returned_fraction.to_numpy(
+            dtype=float
+        ),
+        review_fraction,
+        rtol=0.0,
+        atol=1e-12,
+    ):
+        raise RuntimeError(
+            (
+                "Queue prediction review_fraction "
+                "does not match the requested capacity."
+            )
+        )
+
+    if not (
+        frame["selected_for_review"]
+        .map(
+            lambda value:
+                value is True
+        )
+        .all()
+    ):
+        raise RuntimeError(
+            (
+                "Every claim returned by /top-review "
+                "must be selected_for_review=True."
+            )
+        )
+
+    # -------------------------------------------------------------------------
+    # Ordering
+    # -------------------------------------------------------------------------
+
+    frame = (
         frame
         .sort_values(
             [
@@ -700,11 +954,36 @@ def _validate_predictions(
                 True,
                 False,
             ],
+            kind="stable",
         )
         .reset_index(
             drop=True
         )
     )
+
+    scores_by_rank = (
+        frame["fraud_risk_score"]
+        .to_numpy()
+    )
+
+    if len(
+        scores_by_rank
+    ) > 1:
+
+        if np.any(
+            np.diff(
+                scores_by_rank
+            )
+            > 1e-12
+        ):
+            raise RuntimeError(
+                (
+                    "Queue ranking is inconsistent "
+                    "with descending fraud-risk scores."
+                )
+            )
+
+    return frame
 
 
 # =============================================================================
@@ -719,19 +998,36 @@ def _enrich_queue(
     ],
 ) -> pd.DataFrame:
     """
-    Merge model output with business attributes and human-review state.
+    Merge selected predictions with business attributes
+    and persisted investigator state.
     """
 
-    queue = (
-        _validate_predictions(
-            predictions
-        )
+    source = _claims_to_frame(
+        claims
     )
 
-    source = (
-        _claims_to_frame(
-            claims
-        )
+    expected_claim_ids = set(
+        source["claim_id"]
+        .astype(str)
+        .tolist()
+    )
+
+    review_fraction = _safe_float(
+        predictions[
+            "review_fraction"
+        ]
+        .iloc[0],
+        default=-1.0,
+    )
+
+    queue = _validate_predictions(
+        predictions,
+        expected_claim_ids=(
+            expected_claim_ids
+        ),
+        review_fraction=(
+            review_fraction
+        ),
     )
 
     business_columns = [
@@ -747,74 +1043,60 @@ def _enrich_queue(
         "submission_channel",
         "claim_submission_timestamp",
         "service_date",
+        "customer_age",
+        "provider_type",
+        "provider_region",
     ]
 
     available_columns = [
         column
-
-        for column
-        in business_columns
-
-        if column
-        in source.columns
+        for column in business_columns
+        if column in source.columns
     ]
 
-    source = (
+    source_context = (
         source[
             available_columns
         ]
         .copy()
     )
 
-    # Remove business columns already returned directly by API,
-    # except claim_id which remains the join key.
     duplicate_business_columns = [
         column
-
-        for column
-        in available_columns
-
+        for column in available_columns
         if (
             column != "claim_id"
-            and column
-            in queue.columns
+            and column in queue.columns
         )
     ]
 
     if duplicate_business_columns:
-
-        queue = (
-            queue.drop(
-                columns=duplicate_business_columns
+        queue = queue.drop(
+            columns=(
+                duplicate_business_columns
             )
         )
 
-    queue = (
-        queue.merge(
-            source,
-            on="claim_id",
-            how="left",
-            validate="one_to_one",
-        )
+    queue = queue.merge(
+        source_context,
+        on="claim_id",
+        how="left",
+        validate="one_to_one",
     )
 
-    queue[
-        "risk_tier"
-    ] = (
-        queue[
-            "fraud_risk_score"
-        ]
+    # -------------------------------------------------------------------------
+    # Derived operational interpretation
+    # -------------------------------------------------------------------------
+
+    queue["risk_tier"] = (
+        queue["fraud_risk_score"]
         .apply(
             risk_tier
         )
     )
 
-    queue[
-        "priority"
-    ] = (
-        queue[
-            "fraud_risk_score"
-        ]
+    queue["priority"] = (
+        queue["fraud_risk_score"]
         .apply(
             _risk_priority
         )
@@ -823,13 +1105,15 @@ def _enrich_queue(
     queue[
         "model_recommendation"
     ] = (
-        queue[
-            "fraud_risk_score"
-        ]
+        queue["fraud_risk_score"]
         .apply(
             _model_recommendation
         )
     )
+
+    # -------------------------------------------------------------------------
+    # Persistent human state
+    # -------------------------------------------------------------------------
 
     decisions = (
         st.session_state
@@ -846,41 +1130,25 @@ def _enrich_queue(
         .queue_decision_timestamps
     )
 
-    queue[
-        "human_decision"
-    ] = (
-        queue[
-            "claim_id"
-        ]
-        .map(
-            decisions
-        )
+    queue["human_decision"] = (
+        queue["claim_id"]
+        .map(decisions)
         .fillna(
             "Pending review"
         )
     )
 
-    queue[
-        "investigator_note"
-    ] = (
-        queue[
-            "claim_id"
-        ]
-        .map(
-            notes
-        )
+    queue["investigator_note"] = (
+        queue["claim_id"]
+        .map(notes)
         .fillna("")
     )
 
     queue[
         "decision_updated_at"
     ] = (
-        queue[
-            "claim_id"
-        ]
-        .map(
-            timestamps
-        )
+        queue["claim_id"]
+        .map(timestamps)
         .fillna("")
     )
 
@@ -908,48 +1176,47 @@ def _generate_queue(
     ],
     capacity: float,
     source_name: str,
+    source_type: str,
 ) -> None:
     """
-    Score portfolio and persist selected investigation worklist.
+    Build the authoritative investigation queue through /top-review.
     """
 
-    if not claims:
-
-        raise ValueError(
-            (
-                "Portfolio contains "
-                "no claims."
-            )
-        )
-
-    capacity = (
-        float(
-            capacity
-        )
+    capacity = _probability(
+        capacity,
+        field="review_fraction",
     )
 
-    if not (
-        0
-        < capacity
-        <= 1
-    ):
-
+    if capacity <= 0:
         raise ValueError(
             (
                 "Investigation capacity must "
-                "be greater than 0 and at most 100%."
+                "be greater than zero."
             )
         )
 
-    clean_claims = (
-        _strip_leakage(
-            claims
+    clean_claims = _strip_leakage(
+        claims
+    )
+
+    source_frame = _claims_to_frame(
+        clean_claims
+    )
+
+    expected_claim_ids = set(
+        source_frame["claim_id"]
+        .astype(str)
+        .tolist()
+    )
+
+    model_info = (
+        _runtime_model_info(
+            client
         )
     )
 
-    # Validate claim IDs before API request.
-    _claims_to_frame(
-        clean_claims
+    started = (
+        perf_counter()
     )
 
     with st.spinner(
@@ -958,23 +1225,96 @@ def _generate_queue(
             "and building the investigation queue..."
         )
     ):
-
-        response = (
-            client.top_review(
-                clean_claims,
-                capacity,
-            )
+        response = client.top_review(
+            clean_claims,
+            capacity,
         )
+
+    elapsed_seconds = max(
+        perf_counter()
+        - started,
+        0.0,
+    )
 
     if not isinstance(
         response,
         dict,
     ):
-
         raise RuntimeError(
             (
                 "The API returned an invalid "
                 "queue response."
+            )
+        )
+
+    # -------------------------------------------------------------------------
+    # Response envelope
+    # -------------------------------------------------------------------------
+
+    required_envelope = {
+        "total_claims",
+        "selected_claims",
+        "review_fraction",
+        "predictions",
+    }
+
+    missing = (
+        required_envelope
+        - set(response)
+    )
+
+    if missing:
+        raise RuntimeError(
+            (
+                "Queue API response is missing: "
+                + ", ".join(
+                    sorted(missing)
+                )
+            )
+        )
+
+    total_claims = _safe_int(
+        response.get(
+            "total_claims"
+        ),
+        default=-1,
+    )
+
+    selected_claims = _safe_int(
+        response.get(
+            "selected_claims"
+        ),
+        default=-1,
+    )
+
+    returned_capacity = _safe_float(
+        response.get(
+            "review_fraction"
+        ),
+        default=-1.0,
+    )
+
+    if (
+        total_claims
+        != len(clean_claims)
+    ):
+        raise RuntimeError(
+            (
+                "Queue API total_claims does not "
+                "match the submitted portfolio size."
+            )
+        )
+
+    if not np.isclose(
+        returned_capacity,
+        capacity,
+        rtol=0.0,
+        atol=1e-12,
+    ):
+        raise RuntimeError(
+            (
+                "Queue API review_fraction differs "
+                "from the requested capacity."
             )
         )
 
@@ -988,7 +1328,6 @@ def _generate_queue(
         raw_predictions,
         list,
     ):
-
         raise RuntimeError(
             (
                 "Queue API response does not contain "
@@ -996,14 +1335,18 @@ def _generate_queue(
             )
         )
 
-    predictions = (
-        pd.DataFrame(
-            raw_predictions
+    if (
+        selected_claims
+        != len(raw_predictions)
+    ):
+        raise RuntimeError(
+            (
+                "Queue API selected_claims does not "
+                "match the returned prediction count."
+            )
         )
-    )
 
-    if predictions.empty:
-
+    if selected_claims <= 0:
         raise RuntimeError(
             (
                 "The model returned an empty "
@@ -1011,33 +1354,38 @@ def _generate_queue(
             )
         )
 
-    enriched = (
-        _enrich_queue(
-            predictions,
-            clean_claims,
-        )
+    predictions = pd.DataFrame(
+        raw_predictions
     )
 
-    total_claims = (
-        _safe_int(
-            response.get(
-                "total_claims"
-            ),
-            default=len(
-                clean_claims
-            ),
-        )
+    predictions = _validate_predictions(
+        predictions,
+        expected_claim_ids=(
+            expected_claim_ids
+        ),
+        review_fraction=(
+            capacity
+        ),
     )
 
-    selected_claims = (
-        _safe_int(
-            response.get(
-                "selected_claims"
-            ),
-            default=len(
-                enriched
-            ),
+    enriched = _enrich_queue(
+        predictions,
+        clean_claims,
+    )
+
+    if len(enriched) != selected_claims:
+        raise RuntimeError(
+            (
+                "Queue enrichment changed the number "
+                "of selected investigation claims."
+            )
         )
+
+    throughput = (
+        len(clean_claims)
+        / elapsed_seconds
+        if elapsed_seconds > 0
+        else None
     )
 
     st.session_state.queue_results = (
@@ -1049,9 +1397,7 @@ def _generate_queue(
     )
 
     st.session_state.queue_source_name = (
-        str(
-            source_name
-        )
+        str(source_name)
     )
 
     st.session_state.queue_metadata = {
@@ -1068,14 +1414,87 @@ def _generate_queue(
             _utc_timestamp(),
 
         "source_name":
-            str(
-                source_name
+            str(source_name),
+
+        "source_type":
+            str(source_type),
+
+        "generation_seconds":
+            float(
+                elapsed_seconds
+            ),
+
+        "throughput_claims_per_second":
+            (
+                float(throughput)
+                if throughput is not None
+                else None
+            ),
+
+        "mean_selected_risk":
+            float(
+                enriched[
+                    "fraud_risk_score"
+                ]
+                .mean()
+            ),
+
+        "max_selected_risk":
+            float(
+                enriched[
+                    "fraud_risk_score"
+                ]
+                .max()
+            ),
+
+        "model_name":
+            model_info.get(
+                "model_name"
+            ),
+
+        "model_version":
+            model_info.get(
+                "model_version"
+            ),
+
+        "target":
+            model_info.get(
+                "target"
+            ),
+
+        "feature_count":
+            model_info.get(
+                "feature_count"
+            ),
+
+        "transformed_feature_count":
+            model_info.get(
+                "transformed_feature_count"
+            ),
+
+        "probability_method":
+            model_info.get(
+                "probability_method"
+            ),
+
+        "review_policy":
+            model_info.get(
+                "review_policy"
+            ),
+
+        "explainability":
+            model_info.get(
+                "explainability"
             ),
     }
 
+    st.session_state.queue_selected_claim_id = (
+        None
+    )
+
 
 # =============================================================================
-# Queue creation controls
+# Queue builder
 # =============================================================================
 
 
@@ -1083,7 +1502,7 @@ def _render_queue_builder(
     client,
 ) -> None:
     """
-    Render portfolio source and operational capacity controls.
+    Render portfolio source and investigation-capacity controls.
     """
 
     section_header(
@@ -1093,6 +1512,34 @@ def _render_queue_builder(
             "highest-risk claims according to "
             "available investigation capacity."
         ),
+        eyebrow="QUEUE GENERATION",
+    )
+
+    model_info = (
+        _runtime_model_info(
+            client
+        )
+    )
+
+    default_capacity = (
+        _runtime_review_fraction(
+            model_info
+        )
+    )
+
+    default_capacity_percent = int(
+        round(
+            default_capacity
+            * 100
+        )
+    )
+
+    default_capacity_percent = min(
+        max(
+            default_capacity_percent,
+            1,
+        ),
+        25,
     )
 
     control_left, control_right = (
@@ -1111,11 +1558,13 @@ def _render_queue_builder(
                 "Investigation capacity",
                 min_value=1,
                 max_value=25,
-                value=3,
+                value=(
+                    default_capacity_percent
+                ),
                 step=1,
                 key="queue_capacity",
                 help=(
-                    "Percentage of the portfolio "
+                    "Percentage of the scored portfolio "
                     "that investigators can review."
                 ),
             )
@@ -1140,13 +1589,27 @@ def _render_queue_builder(
     info_panel(
         "Operational Policy",
         (
-            "The model ranks the entire portfolio. "
-            f"At {capacity:.0%} capacity, only the highest-ranked "
-            "claims are placed in the investigation queue. "
-            "Selection does not establish fraud."
+            "The backend ranks the complete portfolio and returns "
+            f"the highest-risk claims at {capacity:.0%} review "
+            "capacity. Queue inclusion supports prioritization only "
+            "and does not establish that fraud occurred."
         ),
         tone="info",
     )
+
+    if (
+        abs(
+            capacity
+            - default_capacity
+        )
+        > 1e-12
+    ):
+        st.caption(
+            (
+                "Current queue capacity differs from the "
+                f"deployed default policy ({default_capacity:.1%})."
+            )
+        )
 
     st.write("")
 
@@ -1175,8 +1638,8 @@ def _render_queue_builder(
                 ],
                 key="queue_file",
                 help=(
-                    "Supported formats: "
-                    "JSON, CSV and Parquet."
+                    "Supported formats: JSON, CSV and Parquet. "
+                    f"Maximum {MAX_QUEUE_SOURCE_SIZE:,} claims."
                 ),
             )
         )
@@ -1194,34 +1657,37 @@ def _render_queue_builder(
 
             try:
 
-                claims = (
-                    read_uploaded_file(
-                        uploaded
-                    )
+                claims = read_uploaded_file(
+                    uploaded
                 )
 
-                preview = (
-                    _claims_to_frame(
-                        claims
-                    )
+                preview = _claims_to_frame(
+                    claims
                 )
 
-                selected_estimate = (
+                selected_estimate = min(
+                    len(preview),
                     max(
                         1,
                         int(
                             np.ceil(
-                                len(
-                                    preview
-                                )
+                                len(preview)
                                 * capacity
                             )
                         ),
-                    )
+                    ),
                 )
 
-                p1, p2, p3 = (
-                    st.columns(3)
+                leakage_present = [
+                    column
+                    for column
+                    in LEAKAGE_COLUMNS
+                    if column
+                    in preview.columns
+                ]
+
+                p1, p2, p3, p4 = (
+                    st.columns(4)
                 )
 
                 with p1:
@@ -1235,7 +1701,7 @@ def _render_queue_builder(
                 with p2:
 
                     metric_card(
-                        "Estimated Selected",
+                        "Expected Queue",
                         f"{selected_estimate:,}",
                         (
                             f"At {capacity:.0%} "
@@ -1246,10 +1712,44 @@ def _render_queue_builder(
 
                 with p3:
 
+                    missing_values = int(
+                        preview
+                        .isna()
+                        .sum()
+                        .sum()
+                    )
+
+                    metric_card(
+                        "Missing Values",
+                        f"{missing_values:,}",
+                        "Across source portfolio",
+                        tone=(
+                            "warning"
+                            if missing_values
+                            else "success"
+                        ),
+                    )
+
+                with p4:
+
                     metric_card(
                         "Input Columns",
                         f"{len(preview.columns):,}",
                         "Available source fields",
+                    )
+
+                if leakage_present:
+
+                    st.write("")
+
+                    info_panel(
+                        "Protected Evaluation Fields Detected",
+                        (
+                            f"{len(leakage_present)} synthetic/evaluation "
+                            "field(s) were found and will be removed "
+                            "automatically before inference."
+                        ),
+                        tone="info",
                     )
 
                 with st.expander(
@@ -1258,9 +1758,7 @@ def _render_queue_builder(
                 ):
 
                     st.dataframe(
-                        preview.head(
-                            20
-                        ),
+                        preview.head(20),
                         use_container_width=True,
                         hide_index=True,
                     )
@@ -1279,6 +1777,7 @@ def _render_queue_builder(
                         source_name=(
                             uploaded.name
                         ),
+                        source_type="uploaded",
                     )
 
                     st.success(
@@ -1287,6 +1786,8 @@ def _render_queue_builder(
                             "created successfully."
                         )
                     )
+
+                    st.rerun()
 
             except Exception as exc:
 
@@ -1305,9 +1806,9 @@ def _render_queue_builder(
 
         st.caption(
             (
-                "Run the complete queue workflow "
-                "using the synthetic portfolio bundled "
-                "with this project."
+                "Run the complete prioritization workflow "
+                "using the synthetic portfolio bundled with "
+                "the project."
             )
         )
 
@@ -1321,31 +1822,31 @@ def _render_queue_builder(
                     1_000,
                     2_500,
                     5_000,
+                    10_000,
                 ],
                 value=500,
                 key="queue_demo_size",
             )
         )
 
-        estimated_selection = (
+        estimated_selection = min(
+            int(demo_size),
             max(
                 1,
                 int(
                     np.ceil(
-                        int(
-                            demo_size
-                        )
+                        int(demo_size)
                         * capacity
                     )
                 ),
-            )
+            ),
         )
 
         st.caption(
             (
                 f"Approximately {estimated_selection:,} "
-                "claims will be selected at "
-                f"{capacity:.0%} capacity."
+                f"of {int(demo_size):,} claims will be "
+                f"selected at {capacity:.0%} capacity."
             )
         )
 
@@ -1358,18 +1859,14 @@ def _render_queue_builder(
 
             try:
 
-                demo = (
-                    load_demo_claims(
-                        limit=int(
-                            demo_size
-                        )
+                demo = load_demo_claims(
+                    limit=int(
+                        demo_size
                     )
                 )
 
-                claims = (
-                    demo.to_dict(
-                        orient="records"
-                    )
+                claims = demo.to_dict(
+                    orient="records"
                 )
 
                 _generate_queue(
@@ -1379,6 +1876,7 @@ def _render_queue_builder(
                     source_name=(
                         "Synthetic demo portfolio"
                     ),
+                    source_type="demo",
                 )
 
                 st.success(
@@ -1388,13 +1886,98 @@ def _render_queue_builder(
                     )
                 )
 
+                st.rerun()
+
             except Exception as exc:
 
                 st.error(
-                    str(
-                        exc
-                    )
+                    str(exc)
                 )
+
+
+# =============================================================================
+# Queue integrity
+# =============================================================================
+
+
+def _validate_stored_queue(
+    frame: pd.DataFrame,
+    metadata: dict[str, Any],
+) -> list[str]:
+    """
+    Validate the queue snapshot persisted in Streamlit session state.
+    """
+
+    errors: list[str] = []
+
+    required = {
+        "claim_id",
+        "fraud_risk_score",
+        "risk_rank",
+        "risk_percentile",
+        "review_fraction",
+        "selected_for_review",
+    }
+
+    missing = (
+        required
+        - set(frame.columns)
+    )
+
+    if missing:
+
+        errors.append(
+            (
+                "Stored queue is missing: "
+                + ", ".join(
+                    sorted(missing)
+                )
+            )
+        )
+
+        return errors
+
+    if frame.empty:
+
+        errors.append(
+            "Stored queue is empty."
+        )
+
+        return errors
+
+    if (
+        frame["claim_id"]
+        .astype(str)
+        .duplicated()
+        .any()
+    ):
+        errors.append(
+            (
+                "Stored queue contains "
+                "duplicate claim identifiers."
+            )
+        )
+
+    expected_selected = _safe_int(
+        metadata.get(
+            "selected_claims"
+        ),
+        default=-1,
+    )
+
+    if (
+        expected_selected >= 0
+        and expected_selected
+        != len(frame)
+    ):
+        errors.append(
+            (
+                "Stored queue row count differs "
+                "from queue metadata."
+            )
+        )
+
+    return errors
 
 
 # =============================================================================
@@ -1404,10 +1987,7 @@ def _render_queue_builder(
 
 def _render_summary(
     frame: pd.DataFrame,
-    metadata: dict[
-        str,
-        Any,
-    ],
+    metadata: dict[str, Any],
 ) -> None:
     """
     Render executive operational KPIs.
@@ -1419,60 +1999,51 @@ def _render_summary(
             "Operational summary of claims "
             "currently selected for human review."
         ),
+        eyebrow="SELECTED WORKLIST",
     )
 
-    total = (
-        _safe_int(
-            metadata.get(
-                "total_claims"
-            )
+    total = _safe_int(
+        metadata.get(
+            "total_claims"
         )
     )
 
-    selected = (
-        _safe_int(
-            metadata.get(
-                "selected_claims"
-            )
+    selected = _safe_int(
+        metadata.get(
+            "selected_claims"
         )
     )
 
-    capacity = (
-        _safe_float(
-            metadata.get(
-                "capacity"
-            )
+    capacity = _safe_float(
+        metadata.get(
+            "capacity"
         )
     )
 
-    mean_risk = (
-        _safe_float(
-            frame[
-                "fraud_risk_score"
-            ]
-            .mean()
-        )
+    mean_risk = _safe_float(
+        frame["fraud_risk_score"]
+        .mean()
     )
 
-    max_risk = (
-        _safe_float(
-            frame[
-                "fraud_risk_score"
-            ]
-            .max()
-        )
+    max_risk = _safe_float(
+        frame["fraud_risk_score"]
+        .max()
     )
 
-    immediate_count = (
-        int(
-            (
-                frame[
-                    "priority"
-                ]
-                == "P1 — Immediate"
-            )
-            .sum()
+    immediate_count = int(
+        (
+            frame["priority"]
+            == "P1 — Immediate"
         )
+        .sum()
+    )
+
+    pending_count = int(
+        (
+            frame["human_decision"]
+            == "Pending review"
+        )
+        .sum()
     )
 
     c1, c2, c3, c4 = (
@@ -1484,7 +2055,7 @@ def _render_summary(
         metric_card(
             "Portfolio",
             f"{total:,}",
-            "Total claims scored",
+            "Total claims ranked",
         )
 
     with c2:
@@ -1504,7 +2075,7 @@ def _render_summary(
         metric_card(
             "Mean Selected Risk",
             f"{mean_risk:.2%}",
-            "Selected worklist",
+            "Current worklist",
             tone="warning",
         )
 
@@ -1523,6 +2094,65 @@ def _render_summary(
             ),
         )
 
+    st.write("")
+
+    c1, c2, c3 = (
+        st.columns(3)
+    )
+
+    with c1:
+
+        metric_card(
+            "Pending Reviews",
+            f"{pending_count:,}",
+            "Awaiting investigator action",
+            tone=(
+                "warning"
+                if pending_count
+                else "success"
+            ),
+        )
+
+    generation_seconds = _safe_float(
+        metadata.get(
+            "generation_seconds"
+        ),
+        default=-1.0,
+    )
+
+    with c2:
+
+        metric_card(
+            "Generation Runtime",
+            (
+                f"{generation_seconds:.2f}s"
+                if generation_seconds >= 0
+                else "—"
+            ),
+            "End-to-end queue creation",
+            tone="info",
+        )
+
+    throughput = _safe_float(
+        metadata.get(
+            "throughput_claims_per_second"
+        ),
+        default=-1.0,
+    )
+
+    with c3:
+
+        metric_card(
+            "Throughput",
+            (
+                f"{throughput:,.0f}/s"
+                if throughput >= 0
+                else "—"
+            ),
+            "Portfolio claims processed",
+            tone="neutral",
+        )
+
     source_name = (
         metadata.get(
             "source_name"
@@ -1533,19 +2163,166 @@ def _render_summary(
         or "—"
     )
 
-    generated_at = (
-        metadata.get(
-            "generated_at",
-            "—",
-        )
+    generated_at = metadata.get(
+        "generated_at",
+        "—",
     )
 
     st.caption(
         (
             f"Source: {source_name} • "
-            f"Queue generated: {generated_at}"
+            f"Queue generated: {generated_at} • "
+            f"Model: {metadata.get('model_name') or '—'} "
+            f"v{metadata.get('model_version') or '—'}"
         )
     )
+
+
+# =============================================================================
+# Runtime contract
+# =============================================================================
+
+
+def _render_queue_contract(
+    metadata: dict[str, Any],
+) -> None:
+    """
+    Render the model/policy contract used to generate the queue.
+    """
+
+    st.write("")
+    st.write("")
+
+    section_header(
+        "Queue Contract",
+        (
+            "Runtime model and review policy used when "
+            "the current investigation queue was generated."
+        ),
+        eyebrow="TRACEABILITY",
+    )
+
+    explainability = (
+        metadata.get(
+            "explainability"
+        )
+    )
+
+    if not isinstance(
+        explainability,
+        dict,
+    ):
+        explainability = {}
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+
+        mini_metric(
+            "Model",
+            str(
+                metadata.get(
+                    "model_name"
+                )
+                or "—"
+            ),
+            helper=(
+                str(
+                    metadata.get(
+                        "model_version"
+                    )
+                    or "Version unavailable"
+                )
+            ),
+            tone="info",
+        )
+
+    with c2:
+
+        mini_metric(
+            "Source Features",
+            str(
+                metadata.get(
+                    "feature_count"
+                )
+                or "—"
+            ),
+            helper="Frozen model contract",
+            tone="neutral",
+        )
+
+    with c3:
+
+        mini_metric(
+            "Transformed Features",
+            str(
+                metadata.get(
+                    "transformed_feature_count"
+                )
+                or "—"
+            ),
+            helper="Inference feature space",
+            tone="neutral",
+        )
+
+    st.write("")
+
+    with st.expander(
+        "Runtime contract details",
+        expanded=False,
+    ):
+
+        key_value_row(
+            "Prediction target",
+            str(
+                metadata.get(
+                    "target"
+                )
+                or "—"
+            ),
+            monospace=True,
+        )
+
+        key_value_row(
+            "Probability method",
+            str(
+                metadata.get(
+                    "probability_method"
+                )
+                or "—"
+            ),
+            monospace=True,
+        )
+
+        key_value_row(
+            "Queue capacity",
+            (
+                f"{_safe_float(metadata.get('capacity')):.1%}"
+            ),
+        )
+
+        if explainability:
+
+            key_value_row(
+                "Explainability",
+                str(
+                    explainability.get(
+                        "method"
+                    )
+                    or "Unavailable"
+                ),
+            )
+
+            key_value_row(
+                "Explanation space",
+                str(
+                    explainability.get(
+                        "output_space"
+                    )
+                    or "—"
+                ),
+                monospace=True,
+            )
 
 
 # =============================================================================
@@ -1557,7 +2334,7 @@ def _render_priority_distribution(
     frame: pd.DataFrame,
 ) -> None:
     """
-    Render operational priority composition.
+    Render model-driven queue-priority composition.
     """
 
     st.write("")
@@ -1566,15 +2343,14 @@ def _render_priority_distribution(
     section_header(
         "Priority Distribution",
         (
-            "Model-based operational segmentation "
-            "within the selected queue."
+            "Model-driven operational segmentation "
+            "within the selected review population."
         ),
+        eyebrow="TRIAGE",
     )
 
     counts = (
-        frame[
-            "priority"
-        ]
+        frame["priority"]
         .value_counts()
         .reindex(
             PRIORITY_ORDER,
@@ -1596,16 +2372,9 @@ def _render_priority_distribution(
             "< 5% model risk",
     }
 
-    columns = (
-        st.columns(
-            4
-        )
-    )
+    columns = st.columns(4)
 
-    for (
-        column,
-        priority,
-    ) in zip(
+    for column, priority in zip(
         columns,
         PRIORITY_ORDER,
     ):
@@ -1615,12 +2384,89 @@ def _render_priority_distribution(
             metric_card(
                 priority,
                 f"{int(counts[priority]):,}",
-                helpers[
-                    priority
-                ],
-                tone=_priority_tone(
-                    priority
+                helpers[priority],
+                tone=(
+                    _priority_tone(
+                        priority
+                    )
                 ),
+            )
+
+
+# =============================================================================
+# Decision progress
+# =============================================================================
+
+
+def _render_decision_progress(
+    frame: pd.DataFrame,
+) -> None:
+    """
+    Render human-review workflow progress independently of model priority.
+    """
+
+    st.write("")
+    st.write("")
+
+    section_header(
+        "Human Review Progress",
+        (
+            "Investigator decisions are tracked separately "
+            "from model scores and model recommendations."
+        ),
+        eyebrow="HUMAN WORKFLOW",
+    )
+
+    counts = (
+        frame["human_decision"]
+        .value_counts()
+        .reindex(
+            DECISION_OPTIONS,
+            fill_value=0,
+        )
+    )
+
+    total = max(
+        len(frame),
+        1,
+    )
+
+    columns = st.columns(
+        len(
+            DECISION_OPTIONS
+        )
+    )
+
+    tones = {
+        "Pending review": "warning",
+        "Investigate": "info",
+        "Escalate": "danger",
+        "Clear": "success",
+    }
+
+    for column, decision in zip(
+        columns,
+        DECISION_OPTIONS,
+    ):
+
+        count = int(
+            counts[
+                decision
+            ]
+        )
+
+        with column:
+
+            metric_card(
+                decision,
+                f"{count:,}",
+                (
+                    f"{count / total:.1%} "
+                    "of selected queue"
+                ),
+                tone=tones[
+                    decision
+                ],
             )
 
 
@@ -1633,7 +2479,7 @@ def _render_filters(
     frame: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Apply operational worklist filters without mutating source state.
+    Filter the queue without mutating model or human-review state.
     """
 
     st.write("")
@@ -1642,9 +2488,10 @@ def _render_filters(
     section_header(
         "Investigation Worklist",
         (
-            "Search and filter model-selected "
-            "claims before investigator review."
+            "Search and filter selected claims "
+            "before investigator review."
         ),
+        eyebrow="OPERATIONS",
     )
 
     row1_col1, row1_col2 = (
@@ -1653,37 +2500,37 @@ def _render_filters(
 
     with row1_col1:
 
-        search = (
-            st.text_input(
-                "Search",
-                placeholder=(
-                    "Claim, customer or provider ID"
-                ),
-                key="queue_search",
-            )
+        search = st.text_input(
+            "Search",
+            placeholder=(
+                "Claim, customer or provider ID"
+            ),
+            key="queue_search",
         )
 
     with row1_col2:
 
         priority_options = [
             priority
-
             for priority
             in PRIORITY_ORDER
-
             if priority
-            in frame[
-                "priority"
-            ]
+            in frame["priority"]
             .unique()
         ]
 
         selected_priorities = (
             st.multiselect(
                 "Priority",
-                options=priority_options,
-                default=priority_options,
-                key="queue_priority_filter",
+                options=(
+                    priority_options
+                ),
+                default=(
+                    priority_options
+                ),
+                key=(
+                    "queue_priority_filter"
+                ),
             )
         )
 
@@ -1693,19 +2540,14 @@ def _render_filters(
 
     tiers = [
         value
-
-        for value
-        in [
+        for value in [
             "LOW",
             "MEDIUM",
             "HIGH",
             "CRITICAL",
         ]
-
         if value
-        in frame[
-            "risk_tier"
-        ]
+        in frame["risk_tier"]
         .unique()
     ]
 
@@ -1741,8 +2583,12 @@ def _render_filters(
             selected_services = (
                 st.multiselect(
                     "Service category",
-                    options=service_options,
-                    key="queue_service_filter",
+                    options=(
+                        service_options
+                    ),
+                    key=(
+                        "queue_service_filter"
+                    ),
                 )
             )
 
@@ -1755,40 +2601,42 @@ def _render_filters(
         selected_decisions = (
             st.multiselect(
                 "Human decision",
-                options=DECISION_OPTIONS,
-                key="queue_decision_filter",
+                options=(
+                    DECISION_OPTIONS
+                ),
+                key=(
+                    "queue_decision_filter"
+                ),
             )
         )
 
-    display = (
-        frame.copy()
-    )
+    display = frame.copy()
 
     if selected_priorities:
 
-        display = (
-            display.loc[
-                display[
-                    "priority"
-                ]
-                .isin(
-                    selected_priorities
-                )
-            ]
-        )
+        display = display.loc[
+            display["priority"]
+            .isin(
+                selected_priorities
+            )
+        ]
+
+    else:
+
+        display = display.iloc[0:0]
 
     if selected_tiers:
 
-        display = (
-            display.loc[
-                display[
-                    "risk_tier"
-                ]
-                .isin(
-                    selected_tiers
-                )
-            ]
-        )
+        display = display.loc[
+            display["risk_tier"]
+            .isin(
+                selected_tiers
+            )
+        ]
+
+    else:
+
+        display = display.iloc[0:0]
 
     if (
         selected_services
@@ -1796,30 +2644,22 @@ def _render_filters(
         in display.columns
     ):
 
-        display = (
-            display.loc[
-                display[
-                    "service_category"
-                ]
-                .astype(str)
-                .isin(
-                    selected_services
-                )
-            ]
-        )
+        display = display.loc[
+            display["service_category"]
+            .astype(str)
+            .isin(
+                selected_services
+            )
+        ]
 
     if selected_decisions:
 
-        display = (
-            display.loc[
-                display[
-                    "human_decision"
-                ]
-                .isin(
-                    selected_decisions
-                )
-            ]
-        )
+        display = display.loc[
+            display["human_decision"]
+            .isin(
+                selected_decisions
+            )
+        ]
 
     if search:
 
@@ -1831,23 +2671,18 @@ def _render_filters(
 
         searchable_columns = [
             column
-
-            for column
-            in [
+            for column in [
                 "claim_id",
                 "customer_id",
                 "provider_id",
             ]
-
             if column
             in display.columns
         ]
 
-        mask = (
-            pd.Series(
-                False,
-                index=display.index,
-            )
+        mask = pd.Series(
+            False,
+            index=display.index,
         )
 
         for column in searchable_columns:
@@ -1855,9 +2690,7 @@ def _render_filters(
             mask = (
                 mask
                 |
-                display[
-                    column
-                ]
+                display[column]
                 .astype(str)
                 .str.lower()
                 .str.contains(
@@ -1867,11 +2700,9 @@ def _render_filters(
                 )
             )
 
-        display = (
-            display.loc[
-                mask
-            ]
-        )
+        display = display.loc[
+            mask
+        ]
 
     st.caption(
         (
@@ -1900,19 +2731,20 @@ def _render_worklist_table(
     display: pd.DataFrame,
 ) -> None:
     """
-    Render investigation worklist.
+    Render the selected investigation worklist.
     """
 
     if display.empty:
 
         empty_state(
-            "No matching claims",
+            "No Matching Claims",
             (
-                "No queue item matches the "
-                "current filters."
+                "No queue item matches "
+                "the current filters."
             ),
             hint=(
-                "Adjust search or filter criteria."
+                "Adjust the search or "
+                "filter criteria."
             ),
         )
 
@@ -1922,6 +2754,7 @@ def _render_worklist_table(
         "risk_rank",
         "claim_id",
         "fraud_risk_score",
+        "risk_percentile",
         "priority",
         "risk_tier",
         "model_recommendation",
@@ -1935,23 +2768,16 @@ def _render_worklist_table(
 
     columns = [
         column
-
         for column
         in preferred_columns
-
         if column
         in display.columns
     ]
 
-    table = (
+    st.dataframe(
         display[
             columns
-        ]
-        .copy()
-    )
-
-    st.dataframe(
-        table,
+        ],
         use_container_width=True,
         hide_index=True,
         height=520,
@@ -1974,7 +2800,13 @@ def _render_worklist_table(
                     "Fraud Risk",
                     min_value=0,
                     max_value=1,
-                    format="%.2f",
+                    format="%.3f",
+                ),
+
+            "risk_percentile":
+                st.column_config.NumberColumn(
+                    "Risk Percentile",
+                    format="%.1%%",
                 ),
 
             "priority":
@@ -2023,12 +2855,9 @@ def _render_worklist_table(
 
 def _selected_source_claim(
     claim_id: str,
-) -> dict[
-    str,
-    Any,
-] | None:
+) -> dict[str, Any] | None:
     """
-    Retrieve complete source payload for one queue claim.
+    Retrieve the complete source claim used during queue generation.
     """
 
     claims = (
@@ -2050,14 +2879,13 @@ def _selected_source_claim(
                 claim_id
             )
         ):
-
             return claim
 
     return None
 
 
 # =============================================================================
-# Claim Analysis drill-down
+# Claim Analysis transfer
 # =============================================================================
 
 
@@ -2065,15 +2893,14 @@ def _open_claim_analysis(
     row: pd.Series,
 ) -> None:
     """
-    Transfer the selected queue claim into Claim Analysis.
+    Transfer a queue claim into Claim Analysis.
+
+    The full source claim is preserved so Claim Analysis can request
+    a fresh local TreeSHAP explanation through /explain.
     """
 
-    claim_id = (
-        str(
-            row[
-                "claim_id"
-            ]
-        )
+    claim_id = str(
+        row["claim_id"]
     )
 
     source_claim = (
@@ -2083,7 +2910,6 @@ def _open_claim_analysis(
     )
 
     if source_claim is None:
-
         raise ValueError(
             (
                 "The source claim payload "
@@ -2091,11 +2917,27 @@ def _open_claim_analysis(
             )
         )
 
-    score = (
-        _bounded_score(
-            row[
-                "fraud_risk_score"
-            ]
+    score = _probability(
+        row["fraud_risk_score"],
+        field="fraud_risk_score",
+    )
+
+    metadata = (
+        st.session_state.get(
+            "queue_metadata"
+        )
+        or {}
+    )
+
+    model_name = _safe_model_value(
+        row.get(
+            "model_name"
+        )
+    )
+
+    model_version = _safe_model_value(
+        row.get(
+            "model_version"
         )
     )
 
@@ -2107,15 +2949,21 @@ def _open_claim_analysis(
             score,
 
         "model_name":
-            row.get(
-                "model_name",
-                "XGBoost",
+            (
+                model_name
+                or metadata.get(
+                    "model_name"
+                )
+                or "—"
             ),
 
         "model_version":
-            row.get(
-                "model_version",
-                "1.0.0",
+            (
+                model_version
+                or metadata.get(
+                    "model_version"
+                )
+                or "—"
             ),
     }
 
@@ -2135,14 +2983,18 @@ def _open_claim_analysis(
         "Investigation Queue"
     )
 
-    # This matches the radio key used by frontend/app.py.
+    # Do not preserve a stale explanation from another claim.
+    st.session_state.single_explanation = (
+        None
+    )
+
     st.session_state.main_navigation = (
         "Claim Analysis"
     )
 
 
 # =============================================================================
-# Claim detail / human decision
+# Claim review
 # =============================================================================
 
 
@@ -2150,7 +3002,7 @@ def _render_claim_detail(
     frame: pd.DataFrame,
 ) -> None:
     """
-    Render one queue case and record investigator decision.
+    Inspect one queue case and persist the investigator decision.
     """
 
     if frame.empty:
@@ -2162,62 +3014,117 @@ def _render_claim_detail(
     section_header(
         "Claim Review",
         (
-            "Inspect an individual queue item, "
-            "compare model recommendation and "
-            "record the investigator decision."
+            "Inspect an individual queue item, compare "
+            "the model recommendation and record the "
+            "investigator's independent decision."
         ),
+        eyebrow="CASE REVIEW",
+    )
+
+    lookup = (
+        frame
+        .assign(
+            _claim_id_text=(
+                frame["claim_id"]
+                .astype(str)
+            )
+        )
+        .set_index(
+            "_claim_id_text",
+            drop=False,
+        )
     )
 
     claim_options = (
-        frame[
-            "claim_id"
-        ]
+        frame["claim_id"]
         .astype(str)
         .tolist()
     )
 
-    selected_claim_id = (
-        st.selectbox(
-            "Open claim",
-            options=claim_options,
-            key="queue_claim_detail_selector",
-            format_func=lambda claim_id:
-                (
-                    f"#{_safe_int(frame.loc[frame['claim_id'].astype(str) == str(claim_id), 'risk_rank'].iloc[0])}"
-                    f" • {claim_id}"
-                    f" • "
-                    f"{_bounded_score(frame.loc[frame['claim_id'].astype(str) == str(claim_id), 'fraud_risk_score'].iloc[0]):.2%}"
-                ),
+    def _claim_label(
+        claim_id: str,
+    ) -> str:
+
+        item = lookup.loc[
+            str(
+                claim_id
+            )
+        ]
+
+        if isinstance(
+            item,
+            pd.DataFrame,
+        ):
+            item = item.iloc[0]
+
+        rank = _safe_int(
+            item.get(
+                "risk_rank"
+            )
         )
+
+        score = _probability(
+            item.get(
+                "fraud_risk_score"
+            ),
+            field="fraud_risk_score",
+        )
+
+        return (
+            f"#{rank} • "
+            f"{claim_id} • "
+            f"{score:.2%}"
+        )
+
+    selected_claim_id = st.selectbox(
+        "Open claim",
+        options=claim_options,
+        key=(
+            "queue_claim_detail_selector"
+        ),
+        format_func=_claim_label,
     )
 
     st.session_state.queue_selected_claim_id = (
         selected_claim_id
     )
 
-    row = (
-        frame.loc[
-            frame[
-                "claim_id"
-            ]
-            .astype(str)
-            == str(
-                selected_claim_id
-            )
-        ]
-        .iloc[
-            0
-        ]
+    row = lookup.loc[
+        str(
+            selected_claim_id
+        )
+    ]
+
+    if isinstance(
+        row,
+        pd.DataFrame,
+    ):
+        row = row.iloc[0]
+
+    score = _probability(
+        row.get(
+            "fraud_risk_score"
+        ),
+        field="fraud_risk_score",
     )
 
-    left, right = (
-        st.columns(
-            [
-                1.25,
-                1,
-            ],
-            gap="large",
+    priority = str(
+        row.get(
+            "priority",
+            "P4 — Monitor",
         )
+    )
+
+    tone = _priority_tone(
+        priority
+    )
+
+    left, right = st.columns(
+        [
+            1.25,
+            1,
+        ],
+        gap="large",
     )
 
     # -------------------------------------------------------------------------
@@ -2234,29 +3141,12 @@ def _render_claim_detail(
                 "### Model Assessment"
             )
 
-            priority = (
-                str(
-                    row.get(
-                        "priority",
-                        "P4 — Monitor",
-                    )
-                )
-            )
-
-            tone = (
-                _priority_tone(
-                    priority
-                )
-            )
-
-            a1, a2, a3 = (
-                st.columns(
-                    [
-                        .8,
-                        1,
-                        1.2,
-                    ]
-                )
+            a1, a2, a3 = st.columns(
+                [
+                    .8,
+                    1,
+                    1.2,
+                ]
             )
 
             with a1:
@@ -2274,10 +3164,8 @@ def _render_claim_detail(
 
                 metric_card(
                     "Fraud Risk",
-                    (
-                        f"{_bounded_score(row.get('fraud_risk_score')):.2%}"
-                    ),
-                    "Individual score",
+                    f"{score:.2%}",
+                    "Individual model score",
                     tone=tone,
                 )
 
@@ -2308,8 +3196,8 @@ def _render_claim_detail(
 
             st.caption(
                 (
-                    "This recommendation is generated "
-                    "from model risk and portfolio ranking."
+                    "Predictive recommendation only; "
+                    "it is not an adjudication decision."
                 )
             )
 
@@ -2368,7 +3256,7 @@ def _render_claim_detail(
                     st.write(
                         (
                             "**Service:** "
-                            f"{row.get('service_category', '—')}"
+                            f"{_format_identifier(row.get('service_category'))}"
                         )
                     )
 
@@ -2400,6 +3288,7 @@ def _render_claim_detail(
 
             if st.button(
                 "Open Full Claim Analysis",
+                type="primary",
                 use_container_width=True,
                 key=(
                     "queue_open_claim_analysis_"
@@ -2440,13 +3329,15 @@ def _render_claim_detail(
                 "### Investigator Decision"
             )
 
+            claim_key = str(
+                selected_claim_id
+            )
+
             current_decision = (
                 st.session_state
                 .queue_human_decisions
                 .get(
-                    str(
-                        selected_claim_id
-                    ),
+                    claim_key,
                     "Pending review",
                 )
             )
@@ -2460,25 +3351,23 @@ def _render_claim_detail(
                 else 0
             )
 
-            decision = (
-                st.selectbox(
-                    "Human decision",
-                    options=DECISION_OPTIONS,
-                    index=current_index,
-                    key=(
-                        f"decision_"
-                        f"{selected_claim_id}"
-                    ),
-                )
+            decision = st.selectbox(
+                "Human decision",
+                options=(
+                    DECISION_OPTIONS
+                ),
+                index=current_index,
+                key=(
+                    f"decision_"
+                    f"{claim_key}"
+                ),
             )
 
             existing_note = (
                 st.session_state
                 .queue_human_notes
                 .get(
-                    str(
-                        selected_claim_id
-                    ),
+                    claim_key,
                     "",
                 )
             )
@@ -2493,10 +3382,27 @@ def _render_claim_detail(
                     height=140,
                     key=(
                         f"note_"
-                        f"{selected_claim_id}"
+                        f"{claim_key}"
                     ),
                 )
             )
+
+            previous_timestamp = (
+                st.session_state
+                .queue_decision_timestamps
+                .get(
+                    claim_key
+                )
+            )
+
+            if previous_timestamp:
+
+                st.caption(
+                    (
+                        "Last saved decision: "
+                        f"{previous_timestamp}"
+                    )
+                )
 
             if st.button(
                 "Save Human Decision",
@@ -2504,41 +3410,27 @@ def _render_claim_detail(
                 use_container_width=True,
                 key=(
                     f"save_decision_"
-                    f"{selected_claim_id}"
+                    f"{claim_key}"
                 ),
             ):
 
-                claim_key = (
-                    str(
-                        selected_claim_id
-                    )
-                )
-
-                timestamp = (
-                    _utc_timestamp()
-                )
+                timestamp = _utc_timestamp()
 
                 st.session_state[
                     "queue_human_decisions"
-                ][
-                    claim_key
-                ] = (
+                ][claim_key] = (
                     decision
                 )
 
                 st.session_state[
                     "queue_human_notes"
-                ][
-                    claim_key
-                ] = (
+                ][claim_key] = (
                     investigation_note.strip()
                 )
 
                 st.session_state[
                     "queue_decision_timestamps"
-                ][
-                    claim_key
-                ] = (
+                ][claim_key] = (
                     timestamp
                 )
 
@@ -2575,15 +3467,17 @@ def _render_claim_detail(
                     )
                 )
 
+                st.rerun()
+
             st.write("")
 
             info_panel(
-                "Human-in-the-loop",
+                "Human-in-the-Loop",
                 (
-                    "The investigator decision is stored "
-                    "separately from the model recommendation. "
-                    "Changing the human decision does not alter "
-                    "the model score."
+                    "The investigator decision is stored separately "
+                    "from the model score and recommendation. "
+                    "Changing the human decision never changes "
+                    "the model output."
                 ),
                 tone="info",
             )
@@ -2596,13 +3490,10 @@ def _render_claim_detail(
 
 def _render_export(
     frame: pd.DataFrame,
-    metadata: dict[
-        str,
-        Any,
-    ],
+    metadata: dict[str, Any],
 ) -> None:
     """
-    Export full review queue including human-review fields.
+    Export the full prioritized worklist including human-review fields.
     """
 
     st.write("")
@@ -2611,47 +3502,63 @@ def _render_export(
     section_header(
         "Export",
         (
-            "Export the prioritized queue with "
-            "model and human-review fields for "
-            "operational follow-up or audit."
+            "Export the prioritized queue with model, "
+            "policy and human-review fields for audit "
+            "or operational follow-up."
         ),
+        eyebrow="AUDIT OUTPUT",
     )
 
-    export = (
-        frame.copy()
-    )
+    export = frame.copy()
 
     export[
         "review_capacity"
-    ] = (
-        _safe_float(
-            metadata.get(
-                "capacity"
-            )
+    ] = _safe_float(
+        metadata.get(
+            "capacity"
         )
     )
 
     export[
         "queue_source"
-    ] = (
-        str(
-            metadata.get(
-                "source_name",
-                st.session_state.get(
-                    "queue_source_name",
-                    "—",
-                ),
-            )
+    ] = str(
+        metadata.get(
+            "source_name",
+            st.session_state.get(
+                "queue_source_name",
+                "—",
+            ),
+        )
+    )
+
+    export[
+        "queue_source_type"
+    ] = str(
+        metadata.get(
+            "source_type",
+            "—",
         )
     )
 
     export[
         "queue_generated_at"
-    ] = (
-        metadata.get(
-            "generated_at",
-            "",
-        )
+    ] = metadata.get(
+        "generated_at",
+        "",
+    )
+
+    export[
+        "queue_model_name"
+    ] = metadata.get(
+        "model_name",
+        "",
+    )
+
+    export[
+        "queue_model_version"
+    ] = metadata.get(
+        "model_version",
+        "",
     )
 
     csv = (
@@ -2670,17 +3577,15 @@ def _render_export(
         file_name=(
             "investigation_queue.csv"
         ),
-        mime=(
-            "text/csv"
-        ),
+        mime="text/csv",
         use_container_width=True,
     )
 
     st.caption(
         (
-            "Export contains model score, rank, "
-            "priority, model recommendation, human decision, "
-            "investigator note and decision timestamp."
+            "Export contains model score, rank, percentile, "
+            "priority, model recommendation, source context, "
+            "human decision, investigator note and audit timestamp."
         )
     )
 
@@ -2694,7 +3599,7 @@ def render(
     client,
 ) -> None:
     """
-    Render the operational human-review queue.
+    Render the operational investigation worklist.
     """
 
     _initialize_queue_state()
@@ -2702,14 +3607,14 @@ def render(
     section_header(
         "Investigation Queue",
         (
-            "Prioritize model-selected claims, "
-            "support investigator triage and keep "
-            "human decisions distinct from model recommendations."
+            "Prioritize model-selected claims, support "
+            "investigator triage and keep human decisions "
+            "strictly separate from model recommendations."
         ),
     )
 
     # -------------------------------------------------------------------------
-    # Page controls
+    # Header controls
     # -------------------------------------------------------------------------
 
     header_left, header_right = (
@@ -2725,9 +3630,9 @@ def render(
 
         st.caption(
             (
-                "The deployed model ranks the portfolio. "
-                "The selected queue reflects investigation "
-                "capacity; investigators retain final decision authority."
+                "The deployed model ranks the portfolio and "
+                "the backend applies the chosen review capacity. "
+                "Investigators retain final decision authority."
             )
         )
 
@@ -2746,7 +3651,7 @@ def render(
     st.write("")
 
     # -------------------------------------------------------------------------
-    # Queue builder
+    # Queue generation
     # -------------------------------------------------------------------------
 
     _render_queue_builder(
@@ -2763,6 +3668,7 @@ def render(
         st.session_state.get(
             "queue_metadata"
         )
+        or {}
     )
 
     source_claims = (
@@ -2773,42 +3679,66 @@ def render(
 
     if (
         frame is None
-        or metadata is None
-        or source_claims is None
+        or not isinstance(
+            frame,
+            pd.DataFrame,
+        )
         or frame.empty
+        or not source_claims
     ):
 
         st.write("")
         st.write("")
 
         empty_state(
-            "No investigation queue",
+            "No Investigation Queue",
             (
                 "Upload a portfolio or use the demo "
                 "portfolio to generate a prioritized "
-                "human-review queue."
+                "human-review worklist."
             ),
             hint=(
-                "Model ranking is applied only after "
-                "a portfolio has been scored."
+                "Queue selection is produced through "
+                "the deployed /top-review endpoint."
             ),
         )
 
         return
 
     # -------------------------------------------------------------------------
-    # Synchronize persistent human state
-    #
-    # Re-enrichment is performed from the model-result columns plus original
-    # source claims. This avoids stale human-review values while preserving
-    # the immutable model score and rank.
+    # Integrity validation
+    # -------------------------------------------------------------------------
+
+    integrity_errors = (
+        _validate_stored_queue(
+            frame,
+            metadata,
+        )
+    )
+
+    if integrity_errors:
+
+        for message in integrity_errors:
+            st.error(message)
+
+        info_panel(
+            "Queue Snapshot Invalid",
+            (
+                "Reset the queue and regenerate it before "
+                "continuing with investigation."
+            ),
+            tone="danger",
+        )
+
+        return
+
+    # -------------------------------------------------------------------------
+    # Synchronize human-state columns
     # -------------------------------------------------------------------------
 
     prediction_columns = [
         column
-
-        for column
-        in [
+        for column in [
             "claim_id",
             "fraud_risk_score",
             "model_name",
@@ -2818,7 +3748,6 @@ def render(
             "review_fraction",
             "selected_for_review",
         ]
-
         if column
         in frame.columns
     ]
@@ -2830,11 +3759,9 @@ def render(
         .copy()
     )
 
-    frame = (
-        _enrich_queue(
-            prediction_frame,
-            source_claims,
-        )
+    frame = _enrich_queue(
+        prediction_frame,
+        source_claims,
     )
 
     st.session_state.queue_results = (
@@ -2842,7 +3769,7 @@ def render(
     )
 
     # -------------------------------------------------------------------------
-    # Results
+    # Queue analytics
     # -------------------------------------------------------------------------
 
     st.write("")
@@ -2853,14 +3780,20 @@ def render(
         metadata,
     )
 
+    _render_queue_contract(
+        metadata
+    )
+
     _render_priority_distribution(
         frame
     )
 
-    filtered = (
-        _render_filters(
-            frame
-        )
+    _render_decision_progress(
+        frame
+    )
+
+    filtered = _render_filters(
+        frame
     )
 
     _render_worklist_table(
