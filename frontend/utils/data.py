@@ -1,11 +1,23 @@
 from __future__ import annotations
 
 import json
+
+from datetime import (
+    date,
+    datetime,
+)
+
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import streamlit as st
+
+
+# =============================================================================
+# Paths
+# =============================================================================
 
 
 PROJECT_ROOT = (
@@ -13,6 +25,7 @@ PROJECT_ROOT = (
     .resolve()
     .parents[2]
 )
+
 
 DEMO_CLAIMS_PATH = (
     PROJECT_ROOT
@@ -22,22 +35,55 @@ DEMO_CLAIMS_PATH = (
 )
 
 
+MAX_UPLOAD_ROWS = 100_000
+
+
+# =============================================================================
+# Serialization
+# =============================================================================
+
+
 def serialize_value(
     value: Any,
-):
-    if pd.isna(value):
+) -> Any:
+
+    if value is None:
         return None
 
     if isinstance(
         value,
-        pd.Timestamp,
+        (
+            pd.Timestamp,
+            datetime,
+            date,
+        ),
     ):
         return value.isoformat()
+
+    try:
+
+        if pd.isna(
+            value
+        ):
+            return None
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        pass
+
+    if isinstance(
+        value,
+        np.generic,
+    ):
+        return value.item()
 
     if hasattr(
         value,
         "item",
     ):
+
         try:
             return value.item()
 
@@ -49,121 +95,392 @@ def serialize_value(
 
 def serialize_row(
     row: pd.Series,
-) -> dict:
+) -> dict[str, Any]:
+
     return {
-        column: serialize_value(value)
-        for column, value in row.items()
+        str(
+            column
+        ):
+            serialize_value(
+                value
+            )
+
+        for (
+            column,
+            value,
+        ) in row.items()
     }
 
 
+def dataframe_to_records(
+    frame: pd.DataFrame,
+) -> list[
+    dict[str, Any]
+]:
+
+    if frame.empty:
+        return []
+
+    return [
+        serialize_row(
+            row
+        )
+
+        for _, row
+        in frame.iterrows()
+    ]
+
+
+# =============================================================================
+# Demo dataset
+# =============================================================================
+
+
 @st.cache_data(
-    show_spinner=False
+    show_spinner=False,
 )
-def load_demo_claims(
-    limit: int = 500,
-) -> pd.DataFrame:
+def _read_demo_dataset() -> pd.DataFrame:
+
     if not DEMO_CLAIMS_PATH.exists():
+
         raise FileNotFoundError(
-            f"Demo claims not found: "
-            f"{DEMO_CLAIMS_PATH}"
+            (
+                "Demo claims dataset not found: "
+                f"{DEMO_CLAIMS_PATH}"
+            )
+        )
+
+    frame = pd.read_parquet(
+        DEMO_CLAIMS_PATH
+    )
+
+    if frame.empty:
+
+        raise ValueError(
+            "Demo claims dataset is empty."
+        )
+
+    return frame
+
+
+def load_demo_claims(
+    limit: int | None = 500,
+) -> pd.DataFrame:
+
+    frame = (
+        _read_demo_dataset()
+    )
+
+    if limit is None:
+
+        return (
+            frame.copy()
+        )
+
+    limit = int(
+        limit
+    )
+
+    if limit <= 0:
+
+        return (
+            frame.iloc[
+                0:0
+            ]
+            .copy()
         )
 
     return (
-        pd.read_parquet(
-            DEMO_CLAIMS_PATH
+        frame
+        .head(
+            limit
         )
-        .head(limit)
         .copy()
     )
 
 
 def get_demo_claim(
     index: int,
-) -> dict:
-    claims = load_demo_claims()
+) -> dict[str, Any]:
 
-    row = claims.iloc[
-        int(index)
-    ]
-
-    return serialize_row(
-        row
+    claims = (
+        load_demo_claims(
+            limit=None
+        )
     )
+
+    index = int(
+        index
+    )
+
+    if not (
+        0
+        <= index
+        < len(
+            claims
+        )
+    ):
+
+        raise IndexError(
+            (
+                f"Demo claim index {index} "
+                "is outside the dataset."
+            )
+        )
+
+    return (
+        serialize_row(
+            claims.iloc[
+                index
+            ]
+        )
+    )
+
+
+# =============================================================================
+# Upload normalization
+# =============================================================================
 
 
 def normalize_uploaded_claims(
-    data,
-) -> list[dict]:
-    if isinstance(data, list):
-        return data
+    data: Any,
+) -> list[
+    dict[str, Any]
+]:
 
-    if isinstance(data, dict):
-        if "claims" in data:
-            claims = data["claims"]
+    if isinstance(
+        data,
+        dict,
+    ):
 
-            if not isinstance(
-                claims,
-                list,
-            ):
-                raise ValueError(
-                    "'claims' must contain a list."
+        if (
+            "claims"
+            in data
+        ):
+
+            claims = (
+                data[
+                    "claims"
+                ]
+            )
+
+        else:
+
+            claims = [
+                data
+            ]
+
+    elif isinstance(
+        data,
+        list,
+    ):
+
+        claims = data
+
+    else:
+
+        raise ValueError(
+            (
+                "Input must contain one claim, "
+                "a list of claims, or an object "
+                "with a 'claims' field."
+            )
+        )
+
+    if not claims:
+
+        raise ValueError(
+            "The uploaded portfolio is empty."
+        )
+
+    if (
+        len(
+            claims
+        )
+        > MAX_UPLOAD_ROWS
+    ):
+
+        raise ValueError(
+            (
+                f"Uploaded portfolio contains "
+                f"{len(claims):,} rows; maximum supported "
+                f"frontend upload is {MAX_UPLOAD_ROWS:,}."
+            )
+        )
+
+    normalized: list[
+        dict[str, Any]
+    ] = []
+
+    for (
+        index,
+        claim,
+    ) in enumerate(
+        claims
+    ):
+
+        if not isinstance(
+            claim,
+            dict,
+        ):
+
+            raise ValueError(
+                (
+                    f"Claim at position {index} "
+                    "is not a JSON object."
                 )
+            )
 
-            return claims
+        normalized.append(
+            {
+                str(
+                    key
+                ):
+                    serialize_value(
+                        value
+                    )
 
-        return [data]
+                for (
+                    key,
+                    value,
+                ) in claim.items()
+            }
+        )
 
-    raise ValueError(
-        "Input must contain one claim "
-        "or a list of claims."
-    )
+    return normalized
+
+
+# =============================================================================
+# Upload reader
+# =============================================================================
 
 
 def read_uploaded_file(
     uploaded,
-) -> list[dict]:
+) -> list[
+    dict[str, Any]
+]:
+
+    if uploaded is None:
+
+        raise ValueError(
+            "No file was uploaded."
+        )
+
     filename = (
-        uploaded.name.lower()
+        str(
+            uploaded.name
+        )
+        .lower()
+        .strip()
     )
+
+    # -------------------------------------------------------------------------
+    # JSON
+    # -------------------------------------------------------------------------
 
     if filename.endswith(
         ".json"
     ):
-        data = json.load(
-            uploaded
+
+        try:
+
+            data = json.load(
+                uploaded
+            )
+
+        except json.JSONDecodeError as exc:
+
+            raise ValueError(
+                (
+                    "Uploaded JSON is invalid: "
+                    f"{exc}"
+                )
+            ) from exc
+
+        return (
+            normalize_uploaded_claims(
+                data
+            )
         )
 
-        return normalize_uploaded_claims(
-            data
-        )
+    # -------------------------------------------------------------------------
+    # CSV
+    # -------------------------------------------------------------------------
 
     if filename.endswith(
         ".csv"
     ):
-        dataframe = (
-            pd.read_csv(
+
+        try:
+
+            frame = pd.read_csv(
                 uploaded
+            )
+
+        except Exception as exc:
+
+            raise ValueError(
+                (
+                    "Unable to read CSV file: "
+                    f"{exc}"
+                )
+            ) from exc
+
+        if frame.empty:
+
+            raise ValueError(
+                "Uploaded CSV contains no rows."
+            )
+
+        return (
+            normalize_uploaded_claims(
+                dataframe_to_records(
+                    frame
+                )
             )
         )
 
-        return dataframe.to_dict(
-            orient="records"
-        )
+    # -------------------------------------------------------------------------
+    # Parquet
+    # -------------------------------------------------------------------------
 
     if filename.endswith(
         ".parquet"
     ):
-        dataframe = (
-            pd.read_parquet(
+
+        try:
+
+            frame = pd.read_parquet(
                 uploaded
+            )
+
+        except Exception as exc:
+
+            raise ValueError(
+                (
+                    "Unable to read Parquet file: "
+                    f"{exc}"
+                )
+            ) from exc
+
+        if frame.empty:
+
+            raise ValueError(
+                "Uploaded Parquet contains no rows."
+            )
+
+        return (
+            normalize_uploaded_claims(
+                dataframe_to_records(
+                    frame
+                )
             )
         )
 
-        return [
-            serialize_row(row)
-            for _, row in dataframe.iterrows()
-        ]
-
     raise ValueError(
-        "Supported formats: JSON, CSV, Parquet."
+        (
+            "Unsupported file format. "
+            "Use JSON, CSV or Parquet."
+        )
     )

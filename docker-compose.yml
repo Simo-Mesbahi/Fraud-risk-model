@@ -1,4 +1,9 @@
 services:
+
+  # ===========================================================================
+  # Fraud inference API
+  # ===========================================================================
+
   fraud-api:
     build:
       context: .
@@ -11,6 +16,7 @@ services:
 
     environment:
       PYTHONPATH: ".:src"
+      PYTHONUNBUFFERED: "1"
 
     restart: unless-stopped
 
@@ -20,12 +26,18 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
         ]
+
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 20s
+
+
+  # ===========================================================================
+  # Investigation frontend
+  # ===========================================================================
 
   fraud-frontend:
     build:
@@ -39,6 +51,9 @@ services:
 
     environment:
       FRAUD_API_URL: "http://fraud-api:8000"
+      ARTIFACTS_ROOT: "/app/artifacts"
+      APP_ENV: "development"
+      PYTHONUNBUFFERED: "1"
 
     depends_on:
       fraud-api:
@@ -52,8 +67,9 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health')",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)"
         ]
+
       interval: 30s
       timeout: 5s
       retries: 3
