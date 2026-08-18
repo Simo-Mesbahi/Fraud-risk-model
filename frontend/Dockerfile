@@ -7,7 +7,7 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/frontend \
+    PYTHONPATH=/app \
     ARTIFACTS_ROOT=/app/artifacts
 
 

@@ -1,0 +1,373 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+
+permissions:
+  contents: read
+
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+
+env:
+  PYTHON_VERSION: "3.12"
+  PYTHONPATH: ".:src"
+
+
+jobs:
+
+  # ===========================================================================
+  # Python quality, contracts and tests
+  # ===========================================================================
+
+  quality-tests:
+
+    name: Quality & Tests
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 20
+
+    steps:
+
+      # -----------------------------------------------------------------------
+      # Repository
+      # -----------------------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # -----------------------------------------------------------------------
+      # Python
+      # -----------------------------------------------------------------------
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+
+      # -----------------------------------------------------------------------
+      # Dependencies
+      # -----------------------------------------------------------------------
+
+      - name: Upgrade packaging tools
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+
+
+      - name: Install project dependencies
+        run: |
+          python -m pip install -r requirements.txt
+
+
+      - name: Verify dependency consistency
+        run: |
+          python -m pip check
+
+
+      # -----------------------------------------------------------------------
+      # Artifact presence
+      # -----------------------------------------------------------------------
+
+      - name: Validate required model artifacts
+        run: |
+          test -f artifacts/models/health_fraud_xgboost.joblib
+          test -f artifacts/preprocessor/health_fraud_preprocessor.joblib
+          test -f artifacts/metadata/health_fraud_model_metadata.json
+
+          echo "Required inference artifacts are present."
+
+
+      # -----------------------------------------------------------------------
+      # Static Python validation
+      # -----------------------------------------------------------------------
+
+      - name: Compile Python sources
+        run: |
+          python -m compileall -q \
+            src \
+            api \
+            frontend \
+            tests
+
+
+      # -----------------------------------------------------------------------
+      # Import contract
+      # -----------------------------------------------------------------------
+
+      - name: Validate application imports
+        run: |
+          python - <<'PY'
+          import importlib
+
+          modules = [
+              "health_fraud.models.predict",
+              "health_fraud.features.build",
+              "api.app.main",
+              "api.app.dependencies",
+              "api.app.services.prediction_service",
+              "frontend.api_client",
+              "frontend.components",
+              "frontend.styles",
+              "frontend.utils.data",
+              "frontend.utils.formatting",
+              "frontend.utils.state",
+              "frontend.utils.validation",
+              "frontend.views.overview",
+              "frontend.views.claim_analysis",
+              "frontend.views.portfolio_scoring",
+              "frontend.views.investigation_queue",
+              "frontend.views.model_insights",
+              "frontend.views.system_status",
+          ]
+
+          for module_name in modules:
+              importlib.import_module(module_name)
+              print(f"✓ {module_name}")
+
+          print("\n✓ APPLICATION IMPORT CONTRACT: OK")
+          PY
+
+
+      # -----------------------------------------------------------------------
+      # Full test suite
+      # -----------------------------------------------------------------------
+
+      - name: Run full test suite
+        run: |
+          python -m pytest \
+            tests \
+            -q
+
+
+      # -----------------------------------------------------------------------
+      # Critical-path coverage
+      # -----------------------------------------------------------------------
+
+      - name: Run critical-path coverage
+        run: |
+          python -m pytest \
+            tests \
+            --cov=health_fraud.models.predict \
+            --cov=health_fraud.features.build \
+            --cov=api.app \
+            --cov=frontend.api_client \
+            --cov=frontend.utils.formatting \
+            --cov=frontend.utils.validation \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-report=html:htmlcov \
+            --cov-fail-under=75
+
+
+      # -----------------------------------------------------------------------
+      # Coverage artifact
+      # -----------------------------------------------------------------------
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.xml
+            htmlcov/
+          if-no-files-found: ignore
+          retention-days: 14
+
+
+  # ===========================================================================
+  # Container reproducibility
+  # ===========================================================================
+
+  docker-build:
+
+    name: Docker Build
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 25
+
+    needs:
+      - quality-tests
+
+    steps:
+
+      # -----------------------------------------------------------------------
+      # Repository
+      # -----------------------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # -----------------------------------------------------------------------
+      # Compose contract
+      # -----------------------------------------------------------------------
+
+      - name: Validate Docker Compose configuration
+        run: |
+          docker compose config --quiet
+
+
+      # -----------------------------------------------------------------------
+      # Reproducible image build
+      # -----------------------------------------------------------------------
+
+      - name: Build API and frontend images
+        run: |
+          docker compose build
+
+
+      # -----------------------------------------------------------------------
+      # Start stack
+      # -----------------------------------------------------------------------
+
+      - name: Start application stack
+        run: |
+          docker compose up -d
+
+
+      # -----------------------------------------------------------------------
+      # Runtime health validation
+      # -----------------------------------------------------------------------
+
+      - name: Wait for containers
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Waiting for application containers..."
+
+          for attempt in {1..30}; do
+
+            API_STATUS="$(
+              docker inspect \
+                --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+                health-fraud-api \
+                2>/dev/null \
+                || true
+            )"
+
+            FRONTEND_STATUS="$(
+              docker inspect \
+                --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+                health-fraud-frontend \
+                2>/dev/null \
+                || true
+            )"
+
+            echo \
+              "Attempt ${attempt}/30 | API=${API_STATUS:-missing} | Frontend=${FRONTEND_STATUS:-missing}"
+
+            if \
+              [ "$API_STATUS" = "healthy" ] \
+              && [ "$FRONTEND_STATUS" = "healthy" ]; then
+
+              echo "✓ Both containers are healthy."
+              exit 0
+            fi
+
+            if \
+              [ "$API_STATUS" = "unhealthy" ] \
+              || [ "$FRONTEND_STATUS" = "unhealthy" ]; then
+
+              echo "A container became unhealthy."
+              docker compose ps
+              docker compose logs --tail=200
+              exit 1
+            fi
+
+            sleep 5
+          done
+
+          echo "Timed out waiting for healthy containers."
+
+          docker compose ps
+          docker compose logs --tail=200
+
+          exit 1
+
+
+      # -----------------------------------------------------------------------
+      # API smoke tests
+      # -----------------------------------------------------------------------
+
+      - name: Smoke test API
+        run: |
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            http://127.0.0.1:8000/health
+
+          echo
+
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            http://127.0.0.1:8000/model-info
+
+          echo
+
+
+      # -----------------------------------------------------------------------
+      # Frontend smoke test
+      # -----------------------------------------------------------------------
+
+      - name: Smoke test frontend
+        run: |
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            http://127.0.0.1:8501/_stcore/health
+
+          echo
+
+
+      # -----------------------------------------------------------------------
+      # Runtime status
+      # -----------------------------------------------------------------------
+
+      - name: Show container status
+        run: |
+          docker compose ps
+
+
+      # -----------------------------------------------------------------------
+      # Diagnostics
+      # -----------------------------------------------------------------------
+
+      - name: Show container logs on failure
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --tail=250
+
+
+      # -----------------------------------------------------------------------
+      # Cleanup
+      # -----------------------------------------------------------------------
+
+      - name: Stop application stack
+        if: always()
+        run: |
+          docker compose down --remove-orphans

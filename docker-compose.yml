@@ -53,6 +53,7 @@ services:
       FRAUD_API_URL: "http://fraud-api:8000"
       ARTIFACTS_ROOT: "/app/artifacts"
       APP_ENV: "development"
+      PYTHONPATH: "/app"
       PYTHONUNBUFFERED: "1"
 
     depends_on:
