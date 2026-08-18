@@ -41,9 +41,13 @@ MAX_RISK_DRIVERS = 8
 # =============================================================================
 
 
-MODULE_PATH = Path(
-    __file__
-).resolve()
+MODULE_PATH = (
+    Path(
+        __file__
+    )
+    .resolve()
+)
+
 
 PROJECT_ROOT = (
     MODULE_PATH.parents[2]
@@ -162,6 +166,56 @@ def _artifact_path(
     )
 
 
+def _existing_artifact_path(
+    *parts: str,
+) -> Path | None:
+    """
+    Return an artifact path only when it exists and is a regular file.
+    """
+
+    path = (
+        _artifact_path(
+            *parts
+        )
+    )
+
+    if (
+        path is None
+        or not path.exists()
+        or not path.is_file()
+    ):
+        return None
+
+    return path
+
+
+def _artifact_relative_label(
+    path: Path,
+) -> str:
+    """
+    Return a human-readable artifact path relative to the artifact root.
+    """
+
+    if ARTIFACTS_DIR is None:
+        return str(
+            path
+        )
+
+    try:
+
+        return str(
+            path.relative_to(
+                ARTIFACTS_DIR
+            )
+        )
+
+    except ValueError:
+
+        return str(
+            path
+        )
+
+
 # =============================================================================
 # Cached artifact loading
 # =============================================================================
@@ -177,11 +231,16 @@ def _read_json(
     Read one dictionary JSON artifact safely.
     """
 
-    path = Path(
-        path_string
+    path = (
+        Path(
+            path_string
+        )
     )
 
-    if not path.exists():
+    if (
+        not path.exists()
+        or not path.is_file()
+    ):
         return {}
 
     try:
@@ -223,22 +282,40 @@ def _read_csv(
     Read one analytical CSV artifact safely.
     """
 
-    path = Path(
-        path_string
+    path = (
+        Path(
+            path_string
+        )
     )
 
-    if not path.exists():
+    if (
+        not path.exists()
+        or not path.is_file()
+    ):
         return pd.DataFrame()
 
     try:
 
-        return pd.read_csv(
+        frame = pd.read_csv(
             path
         )
 
-    except Exception:
+    except (
+        OSError,
+        ValueError,
+        pd.errors.ParserError,
+        pd.errors.EmptyDataError,
+    ):
 
         return pd.DataFrame()
+
+    if not isinstance(
+        frame,
+        pd.DataFrame,
+    ):
+        return pd.DataFrame()
+
+    return frame
 
 
 def _load_metadata() -> dict[str, Any]:
@@ -246,17 +323,21 @@ def _load_metadata() -> dict[str, Any]:
     Load frozen model metadata.
     """
 
-    path = _artifact_path(
-        "metadata",
-        "health_fraud_model_metadata.json",
+    path = (
+        _existing_artifact_path(
+            "metadata",
+            "health_fraud_model_metadata.json",
+        )
     )
 
     if path is None:
         return {}
 
-    return _read_json(
-        str(
-            path
+    return (
+        _read_json(
+            str(
+                path
+            )
         )
     )
 
@@ -265,25 +346,29 @@ def _load_artifact_csv(
     *parts: str,
 ) -> pd.DataFrame:
     """
-    Load one CSV relative to the artifact root.
+    Load one CSV artifact relative to the detected artifact root.
     """
 
-    path = _artifact_path(
-        *parts
+    path = (
+        _existing_artifact_path(
+            *parts
+        )
     )
 
     if path is None:
         return pd.DataFrame()
 
-    return _read_csv(
-        str(
-            path
+    return (
+        _read_csv(
+            str(
+                path
+            )
         )
     )
 
 
 # =============================================================================
-# Generic helpers
+# Generic numerical helpers
 # =============================================================================
 
 
@@ -291,8 +376,14 @@ def _safe_float(
     value: Any,
 ) -> float | None:
     """
-    Convert a value into a finite float.
+    Convert one value into a finite float.
     """
+
+    if isinstance(
+        value,
+        bool,
+    ):
+        return None
 
     try:
 
@@ -300,25 +391,26 @@ def _safe_float(
             value
         )
 
-        if np.isfinite(
-            result
-        ):
-            return result
-
     except (
         TypeError,
         ValueError,
     ):
-        pass
 
-    return None
+        return None
+
+    if not np.isfinite(
+        result
+    ):
+        return None
+
+    return result
 
 
 def _safe_int(
     value: Any,
 ) -> int | None:
     """
-    Convert a numeric-like value to integer.
+    Convert an integer-like value to int.
     """
 
     result = (
@@ -330,11 +422,13 @@ def _safe_int(
     if result is None:
         return None
 
-    return int(
+    rounded = int(
         round(
             result
         )
     )
+
+    return rounded
 
 
 def _metric_number(
@@ -364,7 +458,7 @@ def _metric_percent(
     digits: int = 2,
 ) -> str:
     """
-    Format a fraction as percentage.
+    Format a fraction as a percentage.
     """
 
     result = (
@@ -407,21 +501,28 @@ def _pretty_feature(
     value: Any,
 ) -> str:
     """
-    Convert a technical variable name into a readable label.
+    Convert a technical identifier into a readable label.
     """
 
     if value is None:
         return "—"
 
-    return (
+    text = (
         str(
             value
         )
+        .strip()
+    )
+
+    if not text:
+        return "—"
+
+    return (
+        text
         .replace(
             "_",
             " ",
         )
-        .strip()
         .title()
     )
 
@@ -430,7 +531,7 @@ def _extract_metrics(
     metadata: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Return the frozen test-metric dictionary.
+    Return frozen final out-of-time metrics.
     """
 
     metrics = (
@@ -460,10 +561,11 @@ def _review_fraction(
     """
     Resolve operational review capacity.
 
-    Priority:
-        1. deployed runtime contract;
-        2. frozen artifact metadata;
-        3. application default.
+    Priority
+    --------
+    1. deployed runtime contract;
+    2. frozen metadata;
+    3. application default.
     """
 
     if isinstance(
@@ -482,9 +584,11 @@ def _review_fraction(
             dict,
         ):
 
-            value = _safe_float(
-                policy.get(
-                    "fraction"
+            value = (
+                _safe_float(
+                    policy.get(
+                        "fraction"
+                    )
                 )
             )
 
@@ -494,9 +598,10 @@ def _review_fraction(
             ):
                 return value
 
-    policy = metadata.get(
-        "review_policy",
-        {},
+    policy = (
+        metadata.get(
+            "review_policy"
+        )
     )
 
     if isinstance(
@@ -504,9 +609,11 @@ def _review_fraction(
         dict,
     ):
 
-        value = _safe_float(
-            policy.get(
-                "fraction"
+        value = (
+            _safe_float(
+                policy.get(
+                    "fraction"
+                )
             )
         )
 
@@ -521,36 +628,65 @@ def _review_fraction(
     )
 
 
-def _capacity_metric_suffix(
+def _review_fraction_label(
     fraction: float,
 ) -> str:
     """
-    Convert capacity fraction into the metric-key suffix used by artifacts.
-
-    Examples
-    --------
-    0.03 -> 3pct
-    0.05 -> 5pct
-    0.025 -> 2_5pct
+    Format investigation capacity consistently.
     """
 
-    percent = (
+    percent_value = (
         fraction
         * 100
     )
 
     if float(
-        percent
+        percent_value
     ).is_integer():
 
         return (
-            f"{int(percent)}pct"
+            f"{fraction:.0%}"
+        )
+
+    return (
+        f"{fraction:.1%}"
+    )
+
+
+def _capacity_metric_suffix(
+    fraction: float,
+) -> str:
+    """
+    Convert capacity fraction into persisted metric suffix.
+
+    Examples
+    --------
+    0.03  -> 3pct
+    0.05  -> 5pct
+    0.025 -> 2_5pct
+    """
+
+    percent_value = (
+        fraction
+        * 100
+    )
+
+    if float(
+        percent_value
+    ).is_integer():
+
+        return (
+            f"{int(percent_value)}pct"
         )
 
     text = (
-        f"{percent:.6f}"
-        .rstrip("0")
-        .rstrip(".")
+        f"{percent_value:.6f}"
+        .rstrip(
+            "0"
+        )
+        .rstrip(
+            "."
+        )
         .replace(
             ".",
             "_",
@@ -568,13 +704,9 @@ def _capacity_metric(
     fraction: float,
 ) -> Any:
     """
-    Read a capacity-dependent metric without mislabelling it.
+    Read a metric corresponding exactly to the active review capacity.
 
-    Example:
-        review_fraction=0.05
-        -> recall_at_5pct
-
-    No value from a different review capacity is silently substituted.
+    Metrics from another capacity are never silently substituted.
     """
 
     suffix = (
@@ -587,8 +719,10 @@ def _capacity_metric(
         f"{metric_name}_at_{suffix}"
     )
 
-    return metrics.get(
-        key
+    return (
+        metrics.get(
+            key
+        )
     )
 
 
@@ -598,14 +732,14 @@ def _capacity_metric(
 
 
 def _read_runtime_system(
-    client,
+    client: Any,
 ) -> tuple[
     dict[str, Any],
     dict[str, Any],
     str | None,
 ]:
     """
-    Read health and deployed model contract once per render.
+    Read health and deployed model contract once per page render.
     """
 
     try:
@@ -618,24 +752,6 @@ def _read_runtime_system(
             client.model_info()
         )
 
-        if not isinstance(
-            health,
-            dict,
-        ):
-            health = {}
-
-        if not isinstance(
-            model,
-            dict,
-        ):
-            model = {}
-
-        return (
-            health,
-            model,
-            None,
-        )
-
     except Exception as exc:
 
         return (
@@ -646,9 +762,27 @@ def _read_runtime_system(
             ),
         )
 
+    if not isinstance(
+        health,
+        dict,
+    ):
+        health = {}
+
+    if not isinstance(
+        model,
+        dict,
+    ):
+        model = {}
+
+    return (
+        health,
+        model,
+        None,
+    )
+
 
 # =============================================================================
-# Metadata / artifact notice
+# Metadata notice
 # =============================================================================
 
 
@@ -668,8 +802,8 @@ def _render_metadata_notice(
             "Evaluation Artifacts Unavailable",
             (
                 "Performance and explainability artifacts are not "
-                "mounted in the frontend runtime. Live inference "
-                "may still remain available through the API."
+                "mounted in the frontend runtime. Live inference may "
+                "still remain available through the API."
             ),
             tone="warning",
         )
@@ -696,7 +830,7 @@ def _render_executive_kpis(
     runtime_model: dict[str, Any],
 ) -> None:
     """
-    Render out-of-time model performance.
+    Render frozen out-of-time model performance.
     """
 
     metrics = (
@@ -713,12 +847,9 @@ def _render_executive_kpis(
     )
 
     review_label = (
-        f"{review_fraction:.1%}"
-        if (
+        _review_fraction_label(
             review_fraction
-            * 100
-        ) % 1
-        else f"{review_fraction:.0%}"
+        )
     )
 
     section_header(
@@ -735,8 +866,8 @@ def _render_executive_kpis(
         info_panel(
             "Evaluation Metrics Unavailable",
             (
-                "The final out-of-time metrics are not available "
-                "in the current model metadata."
+                "Final out-of-time evaluation metrics are not "
+                "available in the current model metadata."
             ),
             tone="warning",
         )
@@ -820,7 +951,7 @@ def _render_executive_kpis(
             (
                 "Fraud cases captured"
                 if recall is not None
-                else "Metric unavailable at this capacity"
+                else "Not persisted at this capacity"
             ),
             tone=(
                 "success"
@@ -840,7 +971,7 @@ def _render_executive_kpis(
             (
                 "Versus untargeted review"
                 if lift is not None
-                else "Metric unavailable at this capacity"
+                else "Not persisted at this capacity"
             ),
             tone=(
                 "success"
@@ -868,7 +999,7 @@ def _render_executive_kpis(
             (
                 "Investigation yield"
                 if precision is not None
-                else "Metric unavailable at this capacity"
+                else "Not persisted at this capacity"
             ),
             tone=(
                 "info"
@@ -888,7 +1019,7 @@ def _render_executive_kpis(
             (
                 f"At {review_label} review capacity"
                 if fraud_amount_capture is not None
-                else "Metric unavailable at this capacity"
+                else "Not persisted at this capacity"
             ),
             tone=(
                 "success"
@@ -913,15 +1044,28 @@ def _render_executive_kpis(
                 )
             )
 
-        metric_card(
-            "Test Fraud Prevalence",
-            _metric_percent(
-                prevalence,
-                3,
-            ),
-            "Out-of-time population",
-            tone="neutral",
-        )
+        if prevalence is None:
+
+            metric_card(
+                "Test Fraud Prevalence",
+                "Not recorded",
+                (
+                    "Not persisted in frozen evaluation metadata"
+                ),
+                tone="neutral",
+            )
+
+        else:
+
+            metric_card(
+                "Test Fraud Prevalence",
+                _metric_percent(
+                    prevalence,
+                    3,
+                ),
+                "Out-of-time population",
+                tone="neutral",
+            )
 
     st.write("")
 
@@ -938,10 +1082,10 @@ def _render_executive_kpis(
         info_panel(
             "Capacity-Specific Metrics",
             (
-                f"The operational review policy is currently "
-                f"{review_label}. Metrics from another review capacity "
-                "are not substituted or relabelled. Missing values "
-                "therefore remain explicitly unavailable."
+                f"The active review policy is {review_label}. "
+                "Metrics evaluated at another capacity are not "
+                "substituted or relabelled. Missing values therefore "
+                "remain explicitly unavailable."
             ),
             tone="warning",
         )
@@ -951,13 +1095,106 @@ def _render_executive_kpis(
     info_panel(
         "Operational Interpretation",
         (
-            "The deployed model is primarily a ranking system. "
-            "At constrained investigation capacity, recall, precision, "
-            "lift and fraud-amount capture are more operationally "
-            "informative than a standalone classification threshold."
+            "The deployed model is used primarily as a ranking system. "
+            "Under constrained investigation capacity, recall, precision, "
+            "lift and fraud-amount capture are more operationally useful "
+            "than relying on a standalone binary classification threshold."
         ),
         tone="info",
     )
+
+
+# =============================================================================
+# Evaluation context
+# =============================================================================
+
+
+def _render_evaluation_context(
+    metadata: dict[str, Any],
+) -> None:
+    """
+    Render frozen evaluation period and review policy metadata.
+    """
+
+    if not metadata:
+        return
+
+    training_end = (
+        metadata.get(
+            "training_period_end"
+        )
+    )
+
+    test_period = (
+        metadata.get(
+            "test_period"
+        )
+    )
+
+    review_policy = (
+        metadata.get(
+            "review_policy"
+        )
+    )
+
+    if not isinstance(
+        test_period,
+        dict,
+    ):
+        test_period = {}
+
+    with st.expander(
+        "Evaluation context",
+        expanded=False,
+    ):
+
+        key_value_row(
+            "Training period end",
+            (
+                str(
+                    training_end
+                )
+                if training_end
+                else "Not recorded"
+            ),
+        )
+
+        key_value_row(
+            "Out-of-time test start",
+            (
+                str(
+                    test_period.get(
+                        "start"
+                    )
+                )
+                if test_period.get(
+                    "start"
+                )
+                else "Not recorded"
+            ),
+        )
+
+        key_value_row(
+            "Out-of-time test end",
+            (
+                str(
+                    test_period.get(
+                        "end"
+                    )
+                )
+                if test_period.get(
+                    "end"
+                )
+                else "Not recorded"
+            ),
+        )
+
+        key_value_row(
+            "Frozen review policy",
+            format_review_policy(
+                review_policy
+            ),
+        )
 
 
 # =============================================================================
@@ -969,7 +1206,7 @@ def _capacity_candidates() -> list[
     tuple[str, ...]
 ]:
     """
-    Candidate locations for the frozen capacity curve.
+    Candidate locations for a machine-readable frozen capacity curve.
     """
 
     return [
@@ -998,7 +1235,7 @@ def _load_capacity_data() -> tuple[
     str | None,
 ]:
     """
-    Load the first available capacity-curve artifact.
+    Load the first available machine-readable capacity artifact.
     """
 
     for parts in (
@@ -1102,37 +1339,41 @@ def _normalize_capacity_data(
                 required
             )
         )
+    )
+
+    if data.empty:
+        return pd.DataFrame()
+
+    valid_mask = (
+        data[
+            "capacity"
+        ]
+        .between(
+            0,
+            1,
+        )
+        &
+        data[
+            "Recall"
+        ]
+        .between(
+            0,
+            1,
+        )
+        &
+        data[
+            "Fraud Amount Capture"
+        ]
+        .between(
+            0,
+            1,
+        )
+    )
+
+    data = (
+        data
         .loc[
-            lambda current:
-                (
-                    current[
-                        "capacity"
-                    ]
-                    .between(
-                        0,
-                        1,
-                    )
-                )
-                &
-                (
-                    current[
-                        "Recall"
-                    ]
-                    .between(
-                        0,
-                        1,
-                    )
-                )
-                &
-                (
-                    current[
-                        "Fraud Amount Capture"
-                    ]
-                    .between(
-                        0,
-                        1,
-                    )
-                )
+            valid_mask
         ]
         .sort_values(
             "capacity"
@@ -1150,18 +1391,67 @@ def _normalize_capacity_data(
     return data
 
 
+def _capacity_figure_path() -> Path | None:
+    """
+    Resolve the frozen capacity-analysis figure.
+
+    A real frozen evaluation figure is preferred over generating any
+    synthetic or interpolated curve when machine-readable data is absent.
+    """
+
+    candidates = [
+        (
+            "metadata",
+            "final_evaluation",
+            "05_capacity_curve.png",
+        ),
+        (
+            "metadata",
+            "model_experiments",
+            "04_recall_by_review_capacity.png",
+        ),
+    ]
+
+    for parts in candidates:
+
+        path = (
+            _existing_artifact_path(
+                *parts
+            )
+        )
+
+        if path is not None:
+            return path
+
+    return None
+
+
 def _render_capacity_chart(
     metadata: dict[str, Any],
     runtime_model: dict[str, Any],
 ) -> None:
     """
     Render real investigation-capacity behavior.
+
+    Priority
+    --------
+    1. machine-readable capacity curve;
+    2. frozen evaluation figure;
+    3. explicit unavailable state.
+
+    Synthetic fallback values are never generated.
     """
 
     review_fraction = (
         _review_fraction(
             metadata,
             runtime_model,
+        )
+    )
+
+    review_label = (
+        _review_fraction_label(
+            review_fraction
         )
     )
 
@@ -1186,11 +1476,54 @@ def _render_capacity_chart(
 
     if data.empty:
 
+        figure_path = (
+            _capacity_figure_path()
+        )
+
+        if figure_path is not None:
+
+            st.image(
+                str(
+                    figure_path
+                ),
+                use_container_width=True,
+            )
+
+            st.caption(
+                (
+                    "Frozen out-of-time capacity analysis. "
+                    "The original evaluation figure is displayed because "
+                    "a machine-readable capacity curve was not persisted. "
+                    "No synthetic values or interpolation are used."
+                )
+            )
+
+            st.caption(
+                (
+                    "Artifact source: "
+                    + _artifact_relative_label(
+                        figure_path
+                    )
+                )
+            )
+
+            info_panel(
+                "Current Review Policy",
+                (
+                    f"The live investigation policy reviews the top "
+                    f"{review_label} highest-risk claims."
+                ),
+                tone="info",
+            )
+
+            return
+
         info_panel(
-            "Capacity Curve Unavailable",
+            "Capacity Analysis Unavailable",
             (
-                "No valid capacity-curve artifact is available. "
-                "No synthetic fallback values are displayed."
+                "Neither a machine-readable capacity curve nor "
+                "a frozen capacity-analysis figure is available. "
+                "No synthetic fallback values are generated."
             ),
             tone="warning",
         )
@@ -1235,9 +1568,7 @@ def _render_capacity_chart(
         .encode(
             x=alt.X(
                 "capacity:Q",
-                title=(
-                    "Investigation Capacity"
-                ),
+                title="Investigation Capacity",
                 axis=alt.Axis(
                     format=".1%",
                 ),
@@ -1252,9 +1583,7 @@ def _render_capacity_chart(
 
             y=alt.Y(
                 "Value:Q",
-                title=(
-                    "Fraud Capture"
-                ),
+                title="Fraud Capture",
                 axis=alt.Axis(
                     format=".0%",
                 ),
@@ -1292,12 +1621,14 @@ def _render_capacity_chart(
         )
     )
 
-    policy_data = pd.DataFrame(
-        {
-            "capacity": [
-                review_fraction
-            ],
-        }
+    policy_data = (
+        pd.DataFrame(
+            {
+                "capacity": [
+                    review_fraction
+                ],
+            }
+        )
     )
 
     policy_rule = (
@@ -1337,7 +1668,7 @@ def _render_capacity_chart(
     st.caption(
         (
             "Dashed marker: current operational review "
-            f"capacity ({review_fraction:.1%})."
+            f"capacity ({review_label})."
         )
     )
 
@@ -1398,11 +1729,14 @@ def _render_live_system(
 
         return
 
-    status = str(
-        health.get(
-            "status",
-            "unknown",
+    status = (
+        str(
+            health.get(
+                "status",
+                "unknown",
+            )
         )
+        .strip()
     )
 
     model_loaded = (
@@ -1511,9 +1845,7 @@ def _render_live_system(
             mini_metric(
                 "API Health",
                 status.upper(),
-                helper=(
-                    "Inference endpoint"
-                ),
+                helper="Inference endpoint",
                 tone=(
                     "success"
                     if healthy
@@ -1528,9 +1860,7 @@ def _render_live_system(
                 if model_loaded is None
                 else (
                     "YES"
-                    if bool(
-                        model_loaded
-                    )
+                    if model_loaded is True
                     else "NO"
                 )
             )
@@ -1538,9 +1868,7 @@ def _render_live_system(
             mini_metric(
                 "Model Loaded",
                 loaded_label,
-                helper=(
-                    "Runtime readiness"
-                ),
+                helper="Runtime readiness",
                 tone=(
                     "success"
                     if model_loaded is True
@@ -1586,6 +1914,17 @@ def _render_live_system(
         )
 
         key_value_row(
+            "Probability interface",
+            str(
+                model.get(
+                    "probability_method",
+                    "—",
+                )
+            ),
+            monospace=True,
+        )
+
+        key_value_row(
             "Review policy",
             format_review_policy(
                 model.get(
@@ -1623,8 +1962,8 @@ def _render_live_system(
 
         st.caption(
             (
-                "Claim Analysis and Portfolio Scoring "
-                "use this frozen live inference service."
+                "Claim Analysis and Portfolio Scoring consume "
+                "this frozen live inference contract."
             )
         )
 
@@ -1634,6 +1973,33 @@ def _render_live_system(
 # =============================================================================
 
 
+def _normalize_contract_value(
+    value: Any,
+    value_type: str,
+) -> Any:
+    """
+    Normalize contract values before comparison.
+    """
+
+    if value is None:
+        return None
+
+    if value_type == "integer":
+
+        return (
+            _safe_int(
+                value
+            )
+        )
+
+    return (
+        str(
+            value
+        )
+        .strip()
+    )
+
+
 def _render_contract_consistency(
     metadata: dict[str, Any],
     runtime_model: dict[str, Any],
@@ -1641,6 +2007,19 @@ def _render_contract_consistency(
 ) -> None:
     """
     Compare frozen analytical metadata against deployed runtime contract.
+
+    Status semantics
+    ----------------
+    MATCH
+        Both values are present and equivalent.
+
+    MISMATCH
+        Both values are present but differ.
+
+    NOT COMPARED
+        One side does not expose the field.
+
+    Missing metadata therefore never becomes a false deployment mismatch.
     """
 
     st.write("")
@@ -1649,8 +2028,8 @@ def _render_contract_consistency(
     section_header(
         "Deployment Consistency",
         (
-            "Consistency between frozen analytical "
-            "metadata and the model currently served by the API."
+            "Consistency between frozen analytical metadata "
+            "and the model currently served by the API."
         ),
         eyebrow="MODEL GOVERNANCE",
     )
@@ -1660,9 +2039,21 @@ def _render_contract_consistency(
         info_panel(
             "Runtime Verification Unavailable",
             (
-                "The API could not be queried, so the deployed "
-                "model cannot currently be compared with the "
-                "local analytical metadata."
+                "The API could not be queried, so the deployed model "
+                "cannot currently be compared with frozen analytical metadata."
+            ),
+            tone="warning",
+        )
+
+        return
+
+    if not runtime_model:
+
+        info_panel(
+            "Runtime Contract Unavailable",
+            (
+                "The inference API is reachable but did not expose "
+                "a usable model contract."
             ),
             tone="warning",
         )
@@ -1674,34 +2065,45 @@ def _render_contract_consistency(
         info_panel(
             "Metadata Comparison Unavailable",
             (
-                "The runtime model is reachable, but local frozen "
-                "metadata is unavailable."
+                "The runtime model is reachable, but frozen "
+                "analytical metadata is unavailable."
             ),
             tone="warning",
         )
 
         return
 
+    # Deliberately exclude probability_method:
+    #
+    # frozen metadata currently records "raw", while the runtime exposes
+    # "predict_proba". These describe different interfaces and should not be
+    # interpreted as deployment inconsistency without a harmonized semantic
+    # contract.
     fields = [
         (
             "model_name",
             "Model",
+            "text",
         ),
         (
             "model_version",
             "Version",
+            "text",
         ),
         (
             "target",
-            "Target",
+            "Prediction Target",
+            "text",
         ),
         (
             "feature_count",
             "Source Feature Count",
+            "integer",
         ),
         (
             "transformed_feature_count",
             "Transformed Feature Count",
+            "integer",
         ),
     ]
 
@@ -1709,12 +2111,17 @@ def _render_contract_consistency(
         dict[str, Any]
     ] = []
 
+    match_count = 0
     mismatch_count = 0
-    comparable_count = 0
+    unavailable_count = 0
 
-    for key, label in fields:
+    for (
+        key,
+        label,
+        value_type,
+    ) in fields:
 
-        local_value = (
+        artifact_value = (
             metadata.get(
                 key
             )
@@ -1726,35 +2133,44 @@ def _render_contract_consistency(
             )
         )
 
-        if (
-            local_value is None
-            and runtime_value is None
-        ):
-            continue
-
-        comparable = (
-            local_value is not None
-            and runtime_value is not None
+        normalized_artifact = (
+            _normalize_contract_value(
+                artifact_value,
+                value_type,
+            )
         )
 
-        if comparable:
-
-            comparable_count += 1
-
-            match = (
-                str(
-                    local_value
-                )
-                == str(
-                    runtime_value
-                )
+        normalized_runtime = (
+            _normalize_contract_value(
+                runtime_value,
+                value_type,
             )
+        )
+
+        if (
+            normalized_artifact is None
+            or normalized_runtime is None
+        ):
+
+            status = (
+                "NOT COMPARED"
+            )
+
+            unavailable_count += 1
+
+        elif (
+            normalized_artifact
+            == normalized_runtime
+        ):
+
+            status = "MATCH"
+
+            match_count += 1
 
         else:
 
-            match = False
+            status = "MISMATCH"
 
-        if not match:
             mismatch_count += 1
 
         records.append(
@@ -1762,18 +2178,18 @@ def _render_contract_consistency(
                 "Field":
                     label,
 
-                "Artifact":
+                "Frozen Artifact":
                     (
-                        "—"
-                        if local_value is None
+                        "Not recorded"
+                        if artifact_value is None
                         else str(
-                            local_value
+                            artifact_value
                         )
                     ),
 
-                "Runtime":
+                "Live Runtime":
                     (
-                        "—"
+                        "Not exposed"
                         if runtime_value is None
                         else str(
                             runtime_value
@@ -1781,39 +2197,49 @@ def _render_contract_consistency(
                     ),
 
                 "Status":
-                    (
-                        "MATCH"
-                        if match
-                        else "MISMATCH"
-                    ),
+                    status,
             }
         )
 
+    comparable_count = (
+        match_count
+        + mismatch_count
+    )
+
     if (
-        records
+        comparable_count > 0
         and mismatch_count == 0
-        and comparable_count > 0
     ):
+
+        message = (
+            f"All {comparable_count} comparable model-contract "
+            "field(s) match the deployed runtime."
+        )
+
+        if unavailable_count:
+
+            message += (
+                f" {unavailable_count} additional field(s) are "
+                "not exposed by both contracts and are therefore "
+                "reported as not compared."
+            )
 
         info_panel(
             "Deployment Contract Consistent",
-            (
-                "The comparable frozen model metadata matches "
-                "the model currently exposed by the inference API."
-            ),
+            message,
             tone="success",
         )
 
-    elif records:
+    elif mismatch_count > 0:
 
         info_panel(
             "Deployment Contract Mismatch",
             (
-                f"{mismatch_count} model-contract field(s) differ "
-                "or are unavailable between local artifacts and "
-                "the live API."
+                f"{mismatch_count} comparable model-contract "
+                "field(s) differ between the frozen artifact "
+                "and the deployed runtime."
             ),
-            tone="warning",
+            tone="danger",
         )
 
     else:
@@ -1821,51 +2247,57 @@ def _render_contract_consistency(
         info_panel(
             "No Comparable Contract Fields",
             (
-                "The available metadata does not expose enough "
-                "shared fields for a runtime consistency check."
+                "The available contracts do not expose enough shared "
+                "fields for deployment verification."
             ),
             tone="warning",
         )
 
-    if records:
+    with st.expander(
+        "Contract comparison",
+        expanded=False,
+    ):
 
-        with st.expander(
-            "Contract comparison",
-            expanded=False,
-        ):
+        st.dataframe(
+            pd.DataFrame(
+                records
+            ),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Field":
+                    st.column_config.TextColumn(
+                        "Field",
+                        width="medium",
+                    ),
 
-            st.dataframe(
-                pd.DataFrame(
-                    records
-                ),
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Field":
-                        st.column_config.TextColumn(
-                            "Field",
-                            width="medium",
-                        ),
+                "Frozen Artifact":
+                    st.column_config.TextColumn(
+                        "Frozen Artifact",
+                        width="large",
+                    ),
 
-                    "Artifact":
-                        st.column_config.TextColumn(
-                            "Artifact",
-                            width="large",
-                        ),
+                "Live Runtime":
+                    st.column_config.TextColumn(
+                        "Live Runtime",
+                        width="large",
+                    ),
 
-                    "Runtime":
-                        st.column_config.TextColumn(
-                            "Runtime",
-                            width="large",
-                        ),
+                "Status":
+                    st.column_config.TextColumn(
+                        "Status",
+                        width="small",
+                    ),
+            },
+        )
 
-                    "Status":
-                        st.column_config.TextColumn(
-                            "Status",
-                            width="small",
-                        ),
-                },
-            )
+    st.caption(
+        (
+            "Only fields represented by both contracts can produce "
+            "a deployment mismatch. Missing fields are explicitly "
+            "classified as not compared."
+        )
+    )
 
 
 # =============================================================================
@@ -1902,8 +2334,8 @@ def _render_risk_drivers() -> None:
         info_panel(
             "SHAP Importance Unavailable",
             (
-                "Global business-level SHAP importance is "
-                "not available in the frontend runtime."
+                "Global business-level SHAP importance is not "
+                "available in the frontend runtime."
             ),
             tone="warning",
         )
@@ -1922,8 +2354,8 @@ def _render_risk_drivers() -> None:
         info_panel(
             "Invalid SHAP Artifact",
             (
-                "The SHAP importance artifact exists, but "
-                "its schema does not contain the required fields."
+                "The SHAP importance artifact exists, but its schema "
+                "does not contain the required fields."
             ),
             tone="warning",
         )
@@ -1958,19 +2390,18 @@ def _render_risk_drivers() -> None:
         )
 
     importance = (
-        importance.dropna(
+        importance
+        .dropna(
             subset=[
                 "mean_abs_shap"
             ]
         )
-    )
-
-    importance = (
-        importance.loc[
-            importance[
-                "mean_abs_shap"
-            ]
-            >= 0
+        .loc[
+            lambda current:
+                current[
+                    "mean_abs_shap"
+                ]
+                >= 0
         ]
     )
 
@@ -2001,12 +2432,14 @@ def _render_risk_drivers() -> None:
 
     top[
         "Rank"
-    ] = np.arange(
-        1,
-        len(
-            top
+    ] = (
+        np.arange(
+            1,
+            len(
+                top
+            )
+            + 1,
         )
-        + 1,
     )
 
     top[
@@ -2042,9 +2475,7 @@ def _render_risk_drivers() -> None:
             .encode(
                 x=alt.X(
                     "mean_abs_shap:Q",
-                    title=(
-                        "Mean absolute SHAP impact"
-                    ),
+                    title="Mean absolute SHAP impact",
                 ),
 
                 y=alt.Y(
@@ -2139,10 +2570,10 @@ def _render_risk_drivers() -> None:
         "SHAP Interpretation",
         (
             "Mean absolute SHAP measures average predictive influence "
-            "on model output. It does not imply causality, and the "
-            "direction of an individual claim's contribution can differ "
-            "from the global average. Claim Analysis provides the local "
-            "TreeSHAP explanation for a specific claim."
+            "on model output. It does not imply causality. The direction "
+            "of an individual claim's contribution can differ from the "
+            "global average. Claim Analysis provides local TreeSHAP "
+            "attribution for a specific claim."
         ),
         tone="info",
     )
@@ -2155,7 +2586,7 @@ def _render_risk_drivers() -> None:
 
 def _render_model_observations() -> None:
     """
-    Render high-level behavior from frozen analytical artifacts.
+    Render high-level model behavior from frozen analytical artifacts.
     """
 
     st.write("")
@@ -2219,7 +2650,8 @@ def _render_model_observations() -> None:
         )
 
         valid_mechanism = (
-            valid_mechanism.dropna(
+            valid_mechanism
+            .dropna(
                 subset=[
                     "mean_score"
                 ]
@@ -2279,7 +2711,9 @@ def _render_model_observations() -> None:
                 difficulty[
                     "fraud_difficulty"
                 ]
-                .astype(str)
+                .astype(
+                    str
+                )
                 .str.lower()
                 .eq(
                     "hard"
@@ -2366,7 +2800,9 @@ def _render_model_observations() -> None:
                         missed[
                             "fraud_mechanism"
                         ]
-                        .astype(str)
+                        .astype(
+                            str
+                        )
                         .eq(
                             str(
                                 mechanism_name
@@ -2437,7 +2873,7 @@ def _render_model_observations() -> None:
                 (
                     f"{fraud_claims:,} cases evaluated"
                     if fraud_claims is not None
-                    else "Hard synthetic fraud"
+                    else "Hard-fraud evaluation subset"
                 ),
                 tone="warning",
             )
@@ -2459,7 +2895,7 @@ def _render_model_observations() -> None:
 
 def _render_artifact_coverage() -> None:
     """
-    Render traceability of analytical evidence.
+    Render traceability of analytical evidence used by the overview.
     """
 
     st.write("")
@@ -2480,6 +2916,14 @@ def _render_artifact_coverage() -> None:
             (
                 "metadata",
                 "health_fraud_model_metadata.json",
+            ),
+        ),
+        (
+            "Capacity analysis",
+            (
+                "metadata",
+                "final_evaluation",
+                "05_capacity_curve.png",
             ),
         ),
         (
@@ -2516,18 +2960,19 @@ def _render_artifact_coverage() -> None:
         dict[str, str]
     ] = []
 
-    for label, parts in artifact_specs:
+    for (
+        label,
+        parts,
+    ) in artifact_specs:
 
         path = (
-            _artifact_path(
+            _existing_artifact_path(
                 *parts
             )
         )
 
         available = (
             path is not None
-            and path.exists()
-            and path.is_file()
         )
 
         records.append(
@@ -2541,17 +2986,28 @@ def _render_artifact_coverage() -> None:
                         if available
                         else "MISSING"
                     ),
+
+                "Source":
+                    (
+                        "/".join(
+                            parts
+                        )
+                        if available
+                        else "—"
+                    ),
             }
         )
 
-    available_count = sum(
-        record[
-            "Status"
-        ]
-        == "AVAILABLE"
+    available_count = (
+        sum(
+            record[
+                "Status"
+            ]
+            == "AVAILABLE"
 
-        for record
-        in records
+            for record
+            in records
+        )
     )
 
     total_count = (
@@ -2640,6 +3096,25 @@ def _render_artifact_coverage() -> None:
             ),
             use_container_width=True,
             hide_index=True,
+            column_config={
+                "Artifact":
+                    st.column_config.TextColumn(
+                        "Artifact",
+                        width="medium",
+                    ),
+
+                "Status":
+                    st.column_config.TextColumn(
+                        "Status",
+                        width="small",
+                    ),
+
+                "Source":
+                    st.column_config.TextColumn(
+                        "Source",
+                        width="large",
+                    ),
+            },
         )
 
 
@@ -2674,7 +3149,7 @@ def _render_governance() -> None:
 
 
 def render(
-    client,
+    client: Any,
 ) -> None:
     """
     Render the executive fraud-intelligence overview.
@@ -2718,6 +3193,10 @@ def render(
     _render_executive_kpis(
         metadata,
         runtime_model,
+    )
+
+    _render_evaluation_context(
+        metadata
     )
 
     st.write("")
@@ -2785,3 +3264,4 @@ def render(
     # =========================================================================
 
     _render_governance()
+    
