@@ -24,6 +24,8 @@ concurrency:
 env:
   PYTHON_VERSION: "3.12"
   PYTHONPATH: ".:src"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
 
 
 jobs:
@@ -82,16 +84,75 @@ jobs:
 
 
       # -----------------------------------------------------------------------
+      # Repository diagnostics
+      # -----------------------------------------------------------------------
+
+      - name: Show runtime environment
+        run: |
+          python --version
+          python -m pip --version
+          echo "PYTHONPATH=${PYTHONPATH}"
+          pwd
+
+
+      # -----------------------------------------------------------------------
       # Artifact presence
       # -----------------------------------------------------------------------
 
       - name: Validate required model artifacts
+        shell: bash
         run: |
-          test -f artifacts/models/health_fraud_xgboost.joblib
-          test -f artifacts/preprocessor/health_fraud_preprocessor.joblib
-          test -f artifacts/metadata/health_fraud_model_metadata.json
+          set -euo pipefail
 
-          echo "Required inference artifacts are present."
+          MODEL_PATH="artifacts/models/health_fraud_xgboost.joblib"
+          PREPROCESSOR_PATH="artifacts/preprocessors/health_fraud_preprocessor.joblib"
+          METADATA_PATH="artifacts/metadata/health_fraud_model_metadata.json"
+
+          echo "Checking required inference artifacts..."
+
+          for artifact in \
+            "$MODEL_PATH" \
+            "$PREPROCESSOR_PATH" \
+            "$METADATA_PATH"
+          do
+            if [ ! -f "$artifact" ]; then
+              echo "✗ Missing required artifact: $artifact"
+              exit 1
+            fi
+
+            echo "✓ $artifact"
+          done
+
+          echo
+          echo "✓ REQUIRED INFERENCE ARTIFACTS: OK"
+
+
+      # -----------------------------------------------------------------------
+      # Artifact readability
+      # -----------------------------------------------------------------------
+
+      - name: Validate model artifact loading
+        run: |
+          python - <<'PY'
+          from api.app.dependencies import get_fraud_scorer
+
+          scorer = get_fraud_scorer()
+
+          print("Model:", scorer.model_name)
+          print("Version:", scorer.model_version)
+          print("Source features:", scorer.feature_count)
+          print(
+              "Transformed features:",
+              len(scorer.transformed_feature_names),
+          )
+
+          assert scorer.model_name == "XGBoost"
+          assert scorer.model_version == "1.0.0"
+          assert scorer.feature_count == 57
+          assert len(scorer.transformed_feature_names) == 107
+
+          print("\n✓ MODEL ARTIFACT CONTRACT: OK")
+          PY
 
 
       # -----------------------------------------------------------------------
@@ -106,6 +167,8 @@ jobs:
             frontend \
             tests
 
+          echo "✓ PYTHON COMPILATION: OK"
+
 
       # -----------------------------------------------------------------------
       # Import contract
@@ -119,16 +182,23 @@ jobs:
           modules = [
               "health_fraud.models.predict",
               "health_fraud.features.build",
+
               "api.app.main",
               "api.app.dependencies",
+              "api.app.schemas",
               "api.app.services.prediction_service",
+              "api.app.routers.healthcheck",
+              "api.app.routers.predictions",
+
               "frontend.api_client",
               "frontend.components",
               "frontend.styles",
+
               "frontend.utils.data",
               "frontend.utils.formatting",
               "frontend.utils.state",
               "frontend.utils.validation",
+
               "frontend.views.overview",
               "frontend.views.claim_analysis",
               "frontend.views.portfolio_scoring",
@@ -155,6 +225,9 @@ jobs:
             tests \
             -q
 
+          echo
+          echo "✓ FULL TEST SUITE: OK"
+
 
       # -----------------------------------------------------------------------
       # Critical-path coverage
@@ -174,6 +247,9 @@ jobs:
             --cov-report=xml:coverage.xml \
             --cov-report=html:htmlcov \
             --cov-fail-under=75
+
+          echo
+          echo "✓ CRITICAL-PATH COVERAGE GATE: OK"
 
 
       # -----------------------------------------------------------------------
@@ -218,12 +294,24 @@ jobs:
 
 
       # -----------------------------------------------------------------------
+      # Docker environment
+      # -----------------------------------------------------------------------
+
+      - name: Show Docker versions
+        run: |
+          docker --version
+          docker compose version
+
+
+      # -----------------------------------------------------------------------
       # Compose contract
       # -----------------------------------------------------------------------
 
       - name: Validate Docker Compose configuration
         run: |
           docker compose config --quiet
+
+          echo "✓ DOCKER COMPOSE CONTRACT: OK"
 
 
       # -----------------------------------------------------------------------
@@ -232,7 +320,7 @@ jobs:
 
       - name: Build API and frontend images
         run: |
-          docker compose build
+          docker compose build --pull
 
 
       # -----------------------------------------------------------------------
@@ -242,6 +330,8 @@ jobs:
       - name: Start application stack
         run: |
           docker compose up -d
+
+          docker compose ps
 
 
       # -----------------------------------------------------------------------
@@ -255,7 +345,7 @@ jobs:
 
           echo "Waiting for application containers..."
 
-          for attempt in {1..30}; do
+          for attempt in {1..40}; do
 
             API_STATUS="$(
               docker inspect \
@@ -274,33 +364,38 @@ jobs:
             )"
 
             echo \
-              "Attempt ${attempt}/30 | API=${API_STATUS:-missing} | Frontend=${FRONTEND_STATUS:-missing}"
+              "Attempt ${attempt}/40 | API=${API_STATUS:-missing} | Frontend=${FRONTEND_STATUS:-missing}"
 
             if \
               [ "$API_STATUS" = "healthy" ] \
-              && [ "$FRONTEND_STATUS" = "healthy" ]; then
-
-              echo "✓ Both containers are healthy."
+              && [ "$FRONTEND_STATUS" = "healthy" ]
+            then
+              echo
+              echo "✓ BOTH CONTAINERS ARE HEALTHY"
               exit 0
             fi
 
             if \
               [ "$API_STATUS" = "unhealthy" ] \
-              || [ "$FRONTEND_STATUS" = "unhealthy" ]; then
+              || [ "$FRONTEND_STATUS" = "unhealthy" ]
+            then
+              echo
+              echo "✗ A container became unhealthy."
 
-              echo "A container became unhealthy."
               docker compose ps
-              docker compose logs --tail=200
+              docker compose logs --tail=250
+
               exit 1
             fi
 
             sleep 5
           done
 
-          echo "Timed out waiting for healthy containers."
+          echo
+          echo "✗ Timed out waiting for healthy containers."
 
           docker compose ps
-          docker compose logs --tail=200
+          docker compose logs --tail=250
 
           exit 1
 
@@ -309,23 +404,32 @@ jobs:
       # API smoke tests
       # -----------------------------------------------------------------------
 
-      - name: Smoke test API
+      - name: Smoke test API health
         run: |
           curl \
             --fail \
             --silent \
             --show-error \
+            --retry 5 \
+            --retry-delay 2 \
             http://127.0.0.1:8000/health
 
           echo
+          echo "✓ API HEALTH ENDPOINT: OK"
 
+
+      - name: Smoke test API model contract
+        run: |
           curl \
             --fail \
             --silent \
             --show-error \
+            --retry 5 \
+            --retry-delay 2 \
             http://127.0.0.1:8000/model-info
 
           echo
+          echo "✓ API MODEL CONTRACT ENDPOINT: OK"
 
 
       # -----------------------------------------------------------------------
@@ -338,16 +442,47 @@ jobs:
             --fail \
             --silent \
             --show-error \
+            --retry 5 \
+            --retry-delay 2 \
             http://127.0.0.1:8501/_stcore/health
 
           echo
+          echo "✓ STREAMLIT HEALTH ENDPOINT: OK"
+
+
+      # -----------------------------------------------------------------------
+      # Container runtime validation
+      # -----------------------------------------------------------------------
+
+      - name: Validate container runtime state
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          API_RUNNING="$(
+            docker inspect \
+              --format='{{.State.Running}}' \
+              health-fraud-api
+          )"
+
+          FRONTEND_RUNNING="$(
+            docker inspect \
+              --format='{{.State.Running}}' \
+              health-fraud-frontend
+          )"
+
+          test "$API_RUNNING" = "true"
+          test "$FRONTEND_RUNNING" = "true"
+
+          echo "✓ API container running"
+          echo "✓ Frontend container running"
 
 
       # -----------------------------------------------------------------------
       # Runtime status
       # -----------------------------------------------------------------------
 
-      - name: Show container status
+      - name: Show final container status
         run: |
           docker compose ps
 
@@ -359,8 +494,18 @@ jobs:
       - name: Show container logs on failure
         if: failure()
         run: |
-          docker compose ps
-          docker compose logs --tail=250
+          echo "========================================"
+          echo " Docker Compose Status"
+          echo "========================================"
+
+          docker compose ps || true
+
+          echo
+          echo "========================================"
+          echo " Docker Logs"
+          echo "========================================"
+
+          docker compose logs --tail=300 || true
 
 
       # -----------------------------------------------------------------------
@@ -370,4 +515,6 @@ jobs:
       - name: Stop application stack
         if: always()
         run: |
-          docker compose down --remove-orphans
+          docker compose down \
+            --remove-orphans \
+            --volumes
