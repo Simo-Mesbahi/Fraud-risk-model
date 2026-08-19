@@ -1,0 +1,97 @@
+[theme]
+base = "dark"
+
+# Core palette
+primaryColor = "#4C8DFF"
+backgroundColor = "#060A12"
+secondaryBackgroundColor = "#111827"
+textColor = "#F8FAFC"
+
+# Typography
+font = "sans-serif"
+baseFontSize = 16
+
+# Shape / borders
+baseRadius = "medium"
+buttonRadius = "medium"
+borderColor = "#253044"
+dataframeBorderColor = "#253044"
+dataframeHeaderBackgroundColor = "#0B1220"
+showWidgetBorder = true
+showSidebarBorder = true
+
+# Links / code
+linkColor = "#70A6FF"
+linkUnderline = false
+codeTextColor = "#DDEBFF"
+codeBackgroundColor = "#0B1220"
+
+# Semantic palette
+redColor = "#FF5C7A"
+orangeColor = "#FF8A5B"
+yellowColor = "#FFD166"
+greenColor = "#61E7A6"
+blueColor = "#4C8DFF"
+violetColor = "#8B5CF6"
+grayColor = "#98A6BC"
+
+# Charts
+chartCategoricalColors = [
+    "#4C8DFF",
+    "#61E7A6",
+    "#8B5CF6",
+    "#FFD166",
+    "#FF8A5B",
+    "#FF5C7A"
+]
+
+chartSequentialColors = [
+    "#0B1220",
+    "#17315F",
+    "#2856A5",
+    "#4C8DFF",
+    "#86B5FF",
+    "#D8E8FF"
+]
+
+chartDivergingColors = [
+    "#FF5C7A",
+    "#FF9EB1",
+    "#2A3344",
+    "#8BC2FF",
+    "#4C8DFF"
+]
+
+
+[theme.sidebar]
+primaryColor = "#4C8DFF"
+backgroundColor = "#080D18"
+secondaryBackgroundColor = "#0B1220"
+textColor = "#E8EEF8"
+
+linkColor = "#70A6FF"
+linkUnderline = false
+
+codeTextColor = "#DDEBFF"
+codeBackgroundColor = "#0B1220"
+
+borderColor = "#1C2636"
+dataframeBorderColor = "#1C2636"
+dataframeHeaderBackgroundColor = "#0B1220"
+
+showWidgetBorder = true
+
+
+[server]
+headless = true
+runOnSave = false
+enableXsrfProtection = true
+
+
+[browser]
+gatherUsageStats = false
+
+
+[client]
+showErrorDetails = "none"
+toolbarMode = "minimal"

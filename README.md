@@ -38,7 +38,7 @@ At the selected **3% investigation capacity**, the system captures approximately
 
 ## Live Demo
 
-**Application:** `LIVE_DEMO_URL`
+**Application:** `https://fraud-risk-model-s.onrender.com`
 
 The application exposes the complete decision-support workflow, including portfolio monitoring, individual claim analysis, investigation prioritization, batch scoring, model insights and runtime status.
 

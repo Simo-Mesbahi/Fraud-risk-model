@@ -128,6 +128,11 @@ body {
 .stApp {
     min-height: 100vh;
 
+    /* Keep the investigation console visually deterministic across
+       Streamlit/browser theme changes. Native form controls inherit
+       a dark color-scheme and are fully styled below. */
+    color-scheme: dark;
+
     background:
         radial-gradient(
             circle at 88% -5%,
@@ -2396,188 +2401,269 @@ button[kind="secondary"]:hover {
     overflow-wrap: anywhere;
 }
 
+[data-testid="stWidgetLabel"],
+[data-testid="stWidgetLabel"] *,
+[data-testid="stTooltipIcon"],
+[data-testid="stTooltipIcon"] * {
+    color: #C4CDDA !important;
+}
+
+[data-testid="stTooltipIcon"] svg {
+    color: #7F8DA4 !important;
+    fill: currentColor !important;
+}
+
 
 /* ==========================================================================
-   INPUTS
+   INPUTS — CONTROLLED DARK THEME
    ========================================================================== */
+
+/*
+   Streamlit/BaseWeb can restyle native controls when the user switches the
+   application theme. The console itself is intentionally dark, therefore the
+   controls below define both foreground and background explicitly so values
+   never become white-on-white or dark-on-dark.
+*/
+
+div[data-baseweb="input"],
+div[data-baseweb="textarea"],
+div[data-baseweb="select"],
+[data-testid="stDateInput"],
+[data-testid="stNumberInput"],
+[data-testid="stTextInput"],
+[data-testid="stTextArea"] {
+    min-width: 0;
+    color: #EEF4FC !important;
+    color-scheme: dark !important;
+}
 
 div[data-baseweb="input"] > div,
 div[data-baseweb="textarea"] > div,
 div[data-baseweb="select"] > div {
     min-width: 0;
-
-    background:
-        rgba(255,255,255,.030)
-        !important;
-
-    border-color:
-        var(--border)
-        !important;
-
-    border-radius:
-        11px
-        !important;
-
-    transition:
-        border-color var(--transition-fast),
-        box-shadow var(--transition-fast),
-        background var(--transition-fast);
+    background: #111827 !important;
+    border-color: rgba(255,255,255,.10) !important;
+    border-radius: 11px !important;
+    color: #EEF4FC !important;
+    box-shadow: none;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
 }
-
 
 div[data-baseweb="input"] > div:hover,
 div[data-baseweb="textarea"] > div:hover,
 div[data-baseweb="select"] > div:hover {
-    border-color:
-        var(--border-strong)
-        !important;
-
-    background:
-        rgba(255,255,255,.040)
-        !important;
+    background: #151E2E !important;
+    border-color: rgba(255,255,255,.18) !important;
 }
-
 
 div[data-baseweb="input"] > div:focus-within,
 div[data-baseweb="textarea"] > div:focus-within,
 div[data-baseweb="select"] > div:focus-within {
-    border-color:
-        rgba(76,141,255,.62)
-        !important;
-
-    box-shadow:
-        0 0 0 3px
-        rgba(76,141,255,.10)
-        !important;
+    background: #111827 !important;
+    border-color: rgba(76,141,255,.72) !important;
+    box-shadow: 0 0 0 3px rgba(76,141,255,.12) !important;
 }
-
 
 input,
-textarea {
+textarea,
+div[data-baseweb="input"] input,
+div[data-baseweb="textarea"] textarea,
+[data-testid="stDateInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stTextInput"] input,
+[data-testid="stTextArea"] textarea {
     min-width: 0;
-
-    color:
-        #EEF4FC !important;
-
-    caret-color:
-        var(--primary);
+    background: transparent !important;
+    color: #EEF4FC !important;
+    -webkit-text-fill-color: #EEF4FC !important;
+    caret-color: var(--primary) !important;
+    opacity: 1 !important;
 }
 
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus {
+    -webkit-text-fill-color: #EEF4FC !important;
+    -webkit-box-shadow: 0 0 0 1000px #111827 inset !important;
+    box-shadow: 0 0 0 1000px #111827 inset !important;
+    caret-color: var(--primary) !important;
+}
 
 input::placeholder,
-textarea::placeholder {
-    color:
-        #536176 !important;
+textarea::placeholder,
+div[data-baseweb="input"] input::placeholder,
+div[data-baseweb="textarea"] textarea::placeholder {
+    color: #66758D !important;
+    -webkit-text-fill-color: #66758D !important;
+    opacity: 1 !important;
 }
 
+div[data-baseweb="select"] span,
+div[data-baseweb="select"] p,
+div[data-baseweb="select"] [role="combobox"],
+div[data-baseweb="select"] [aria-selected="true"] {
+    color: #EEF4FC !important;
+    -webkit-text-fill-color: #EEF4FC !important;
+    opacity: 1 !important;
+}
+
+div[data-baseweb="select"] svg,
+div[data-baseweb="input"] svg,
+[data-testid="stDateInput"] svg,
+[data-testid="stNumberInput"] svg {
+    color: #AAB6C8 !important;
+    fill: currentColor !important;
+}
+
+[data-testid="stNumberInput"] button {
+    color: #DCE5F1 !important;
+    background: transparent !important;
+    border-color: transparent !important;
+}
+
+[data-testid="stNumberInput"] button:hover {
+    color: #FFFFFF !important;
+    background: rgba(255,255,255,.055) !important;
+}
+
+input:disabled,
+textarea:disabled,
+input[readonly],
+textarea[readonly],
+[data-baseweb="select"] [aria-disabled="true"] {
+    color: #8391A5 !important;
+    -webkit-text-fill-color: #8391A5 !important;
+    opacity: .78 !important;
+}
+
+input::-webkit-calendar-picker-indicator {
+    filter: invert(86%) sepia(8%) saturate(430%) hue-rotate(177deg) brightness(98%) contrast(92%);
+    opacity: .90;
+}
+
+input[type="number"] {
+    color-scheme: dark;
+}
 
 /* ==========================================================================
-   SELECTBOX / MULTISELECT
+   SELECTBOX / MULTISELECT — CONTROLLED DARK THEME
    ========================================================================== */
 
 [data-baseweb="select"] {
     min-width: 0;
-
-    border-radius:
-        11px;
+    border-radius: 11px;
+    color: #EEF4FC !important;
 }
-
 
 [data-baseweb="select"] * {
     min-width: 0;
-
     max-width: 100%;
 }
-
 
 [data-baseweb="select"] span,
-[data-baseweb="select"] div {
-    max-width: 100%;
+[data-baseweb="select"] div,
+[data-baseweb="select"] p {
+    color: #EEF4FC !important;
+    -webkit-text-fill-color: #EEF4FC !important;
 }
-
 
 [data-baseweb="select"] p {
-    white-space:
-        normal !important;
-
-    overflow:
-        visible !important;
-
-    text-overflow:
-        clip !important;
-
-    overflow-wrap:
-        anywhere !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    overflow-wrap: anywhere !important;
 }
-
 
 [data-baseweb="popover"] {
-    border-radius:
-        var(--radius-md);
-
-    max-width:
-        min(
-            92vw,
-            760px
-        ) !important;
+    border-radius: var(--radius-md);
+    max-width: min(92vw, 760px) !important;
+    color-scheme: dark !important;
 }
-
 
 [data-baseweb="popover"] > div {
-    max-width:
-        min(
-            92vw,
-            760px
-        ) !important;
+    max-width: min(92vw, 760px) !important;
+    background: #0C1321 !important;
+    color: #EEF4FC !important;
 }
 
-
-[data-baseweb="menu"] {
-    max-width:
-        min(
-            92vw,
-            760px
-        ) !important;
-
-    overflow-x:
-        hidden;
-
-    background:
-        #0C1321 !important;
-
-    border:
-        1px solid var(--border);
-
-    box-shadow:
-        var(--shadow-lg);
+[data-baseweb="menu"],
+div[role="listbox"] {
+    max-width: min(92vw, 760px) !important;
+    overflow-x: hidden;
+    background: #0C1321 !important;
+    color: #EEF4FC !important;
+    border: 1px solid rgba(255,255,255,.10);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
 }
-
 
 [data-baseweb="menu"] li,
-[data-baseweb="menu"] [role="option"] {
+[data-baseweb="menu"] [role="option"],
+div[role="listbox"] [role="option"] {
     min-width: 0;
-
     max-width: 100%;
-
-    height:
-        auto !important;
-
-    min-height:
-        38px;
-
-    white-space:
-        normal !important;
-
-    overflow:
-        visible !important;
-
-    text-overflow:
-        clip !important;
-
-    overflow-wrap:
-        anywhere !important;
+    height: auto !important;
+    min-height: 40px;
+    padding-top: .52rem;
+    padding-bottom: .52rem;
+    background: transparent !important;
+    color: #EEF4FC !important;
+    -webkit-text-fill-color: #EEF4FC !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    overflow-wrap: anywhere !important;
+    transition: background var(--transition-fast), color var(--transition-fast);
 }
 
+[data-baseweb="menu"] li *,
+[data-baseweb="menu"] [role="option"] *,
+div[role="listbox"] [role="option"] * {
+    color: inherit !important;
+    -webkit-text-fill-color: inherit !important;
+}
+
+[data-baseweb="menu"] li:hover,
+[data-baseweb="menu"] [role="option"]:hover,
+div[role="listbox"] [role="option"]:hover {
+    background: rgba(76,141,255,.105) !important;
+    color: #FFFFFF !important;
+}
+
+[data-baseweb="menu"] [aria-selected="true"],
+[data-baseweb="menu"] [role="option"][aria-selected="true"],
+div[role="listbox"] [role="option"][aria-selected="true"] {
+    background: rgba(76,141,255,.17) !important;
+    color: #FFFFFF !important;
+    font-weight: 700;
+}
+
+[data-baseweb="menu"] [aria-disabled="true"],
+div[role="listbox"] [role="option"][aria-disabled="true"] {
+    color: #5F6D82 !important;
+    -webkit-text-fill-color: #5F6D82 !important;
+    opacity: .72;
+}
+
+[data-baseweb="tag"] {
+    background: rgba(76,141,255,.15) !important;
+    border: 1px solid rgba(76,141,255,.24) !important;
+    color: #DDEBFF !important;
+}
+
+[data-baseweb="tag"] * {
+    color: #DDEBFF !important;
+    -webkit-text-fill-color: #DDEBFF !important;
+}
+
+[data-baseweb="select"] button,
+[data-baseweb="tag"] svg {
+    color: #AAB6C8 !important;
+    fill: currentColor !important;
+}
 
 /* ==========================================================================
    CHECKBOX / TOGGLE
@@ -2764,6 +2850,11 @@ button[data-baseweb="tab"][aria-selected="true"] {
             rgba(76,141,255,.075),
             transparent
         );
+}
+
+button[data-baseweb="tab"][aria-disabled="true"] {
+    color: #536176 !important;
+    opacity: .78;
 }
 
 
