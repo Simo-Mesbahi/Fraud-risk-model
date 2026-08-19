@@ -1,182 +1,214 @@
-# Fraud-risk-model
-# Health Insurance Fraud Risk Model
+# Fraud Risk Decision Support Platform
 
-End-to-end machine learning system for **health insurance fraud investigation prioritization**, covering synthetic data generation, data-quality validation, temporal feature engineering, model selection, out-of-time evaluation, SHAP explainability, REST inference, Docker deployment and automated testing.
+End-to-end machine learning platform for **health insurance fraud investigation prioritization**, combining temporal feature engineering, fraud-risk scoring, operational ranking, TreeSHAP explainability, REST inference, an investigation-oriented web application, Docker deployment and automated testing.
 
-> **Status:** Portfolio / technical prototype built on synthetic data.  
-> The model prioritizes claims for human investigation. It is **not** designed to automatically reject claims or determine that fraud occurred.
+> **Project scope:** technical prototype built on synthetic health-insurance data generated programmatically through the project's configurable data-generation pipeline.  
+> The system is designed to support human fraud-investigation prioritization by scoring, ranking and explaining claims.
+---
+
+## Executive Summary
+
+Fraud investigation teams operate under limited review capacity. The objective of this project is therefore not simply to classify claims as fraudulent or legitimate, but to **rank incoming claims by fraud risk and concentrate investigations where they are expected to create the most value**.
+
+The platform implements the complete decision-support workflow:
+
+```text
+Claims
+  ↓
+Data Validation
+  ↓
+Temporal & Behavioural Features
+  ↓
+XGBoost Fraud Risk Model
+  ↓
+Risk Ranking
+  ↓
+Top-Risk Investigation Queue
+  ↓
+TreeSHAP Explanation
+  ↓
+Human Investigation
+```
+
+The final model is evaluated on a fully held-out **out-of-time test period from January to June 2026**.
+
+At the selected **3% investigation capacity**, the system captures approximately **53.8% of fraudulent claims** and **55.1% of fraudulent claim amount**, with a **17.9× lift** over untargeted review.
 
 ---
 
-## Key Results
+## Live Demo
 
-The final **XGBoost** model was evaluated on a fully held-out **2026 out-of-time test set**.
+**Application:** `LIVE_DEMO_URL`
+
+The application exposes the complete decision-support workflow, including portfolio monitoring, individual claim analysis, investigation prioritization, batch scoring, model insights and runtime status.
+
+---
+
+## 1. Business Problem
+
+Health-insurance fraud is a highly imbalanced detection problem.
+
+When only a small proportion of submitted claims can be investigated manually, reviewing every claim is operationally unrealistic and conventional classification accuracy becomes a poor optimization objective.
+
+This project therefore formulates fraud detection as a:
+
+> **risk-ranking and investigation-prioritization problem**
+
+Rather than applying an arbitrary probability threshold such as `0.50`, claims are ranked by predicted fraud risk and investigators focus on the highest-risk portion of the portfolio.
+
+The operating policy used for final evaluation assumes capacity to review **3% of submitted claims**.
+
+---
+
+## 2. Solution Overview
+
+The platform covers the ML lifecycle from data generation to investigator-facing inference:
+
+- configurable synthetic health-insurance data generation;
+- data-quality validation and invalid-record isolation;
+- leakage-controlled temporal feature engineering;
+- temporal train / validation / test splitting;
+- comparison of multiple model families;
+- frozen XGBoost champion model;
+- out-of-time model evaluation;
+- operational capacity analysis;
+- TreeSHAP global and local explainability;
+- reusable inference layer;
+- FastAPI REST service;
+- Streamlit decision-support interface;
+- Docker / Docker Compose deployment;
+- automated unit and integration testing;
+- GitHub Actions continuous integration.
+
+---
+
+## 3. Key Results
+
+### Final out-of-time test performance
 
 | Metric | Result |
 |---|---:|
-| Test claims | 14,176 |
-| Fraud cases | 409 |
-| Fraud prevalence | 2.885% |
+| Test claims | **14,176** |
+| Fraud cases | **409** |
+| Fraud prevalence | **2.885%** |
 | Average Precision | **0.5520** |
 | ROC-AUC | **0.8518** |
 | Brier Score | **0.0174** |
 | Log Loss | **0.0797** |
-| Precision @ top 3% | **51.64%** |
-| Recall @ top 3% | **53.79%** |
-| Lift @ top 3% | **17.90×** |
-| Fraud amount captured @ top 3% | **55.15%** |
+| Precision @ 3% | **51.64%** |
+| Recall @ 3% | **53.79%** |
+| Lift @ 3% | **17.90×** |
+| Fraud amount captured @ 3% | **55.15%** |
 
-With investigators reviewing only the **3% highest-risk claims**, the model captures approximately:
+Because fraud prevalence is approximately **2.9%**, Average Precision is treated as a primary discrimination metric alongside operational capacity metrics.
 
-- **53.8% of fraudulent claims**
-- **55.1% of fraudulent claim amount**
-- with a **17.9× lift** over untargeted review
-
-in the synthetic out-of-time test environment.
+The results are obtained on synthetic data and should therefore be interpreted as evidence of the **methodology and system design**, not as estimates of real-world insurance performance.
 
 ---
 
-## Business Problem
+## 4. Operational Decision Policy — Top 3% Review Capacity
 
-Health insurance fraud detection is a highly imbalanced classification problem.
+The model produces a continuous fraud-risk score.
 
-When fraud represents only a small fraction of submitted claims, reviewing every claim is operationally inefficient. Conventional classification accuracy is therefore not an appropriate primary objective.
+Claims are sorted from highest to lowest risk and the top fraction is forwarded for investigation.
 
-This project treats fraud detection primarily as a **risk-ranking and investigation-prioritization problem**.
+At a **3% review capacity**:
 
-```text
-Incoming Claims
-      ↓
-Feature Construction
-      ↓
-Fraud Risk Scoring
-      ↓
-Risk Ranking
-      ↓
-Investigation Queue
-      ↓
-Human Review
-      ↓
-Final Decision
-```
+| Operational measure | Result |
+|---|---:|
+| Claims reviewed | **426** |
+| True positives | **220** |
+| False positives | **206** |
+| Fraud recall | **53.79%** |
+| Investigation precision | **51.64%** |
+| Lift | **17.90×** |
+| Fraud amount captured | **55.15%** |
 
-The primary operating point assumes that investigators can review approximately **3% of submitted claims**.
+The 3% operating point is a **business capacity assumption**, not an intrinsic statistical threshold.
 
-The objective is therefore to concentrate as much fraud as possible inside this limited investigation capacity.
+It can be adjusted according to available investigation resources and the desired trade-off between workload and fraud capture.
 
 ---
 
-## System Architecture
+## 5. Application Capabilities
 
-```text
-Synthetic Data Generation
-        ↓
-Data Validation
-        ↓
-Data Cleaning
-        ↓
-Exploratory Data Analysis
-        ↓
-Temporal Feature Engineering
-        ↓
-Model Experiments
-        ↓
-Temporal Champion Selection
-        ↓
-Frozen XGBoost Model
-        ↓
-Out-of-Time Evaluation
-        ↓
-SHAP Explainability
-        ↓
-Reusable FraudScorer
-        ↓
-FastAPI
-        ↓
-Docker / Docker Compose
-        ↓
-Automated Tests
-        ↓
-GitHub Actions CI
-```
+The Streamlit application provides six operational views:
 
-The same frozen preprocessing pipeline and feature contract used during final model evaluation are reused during inference.
+### Overview
+Executive monitoring of portfolio risk, model performance and investigation capacity.
+
+### Claim Analysis
+Individual claim scoring with risk assessment and TreeSHAP-based explanation.
+
+### Investigation Queue
+Prioritized access to the highest-risk claims for manual investigation.
+
+### Portfolio Scoring
+Batch scoring and portfolio-level risk ranking.
+
+### Model Insights
+Model performance, feature importance and explainability artifacts.
+
+### System Status
+Runtime model identity, API availability and inference/explainability status.
+
+The frontend consumes the same inference API used for programmatic scoring, avoiding a separate UI-only prediction implementation.
 
 ---
 
-## Dataset
-
-The project uses a configurable **synthetic health-insurance environment** designed specifically for fraud-model development.
-
-The generated environment contains:
-
-- customers
-- insurance policies
-- healthcare providers
-- healthcare services
-- claims and reimbursements
-- submission information
-- customer historical behaviour
-- provider historical behaviour
-- customer-provider interactions
-- legitimate anomalous behaviour
-- multiple fraud mechanisms
-- multiple fraud difficulty levels
-- controlled missingness
-- intentionally invalid records
-- temporal drift
-
-### Dataset size
-
-Initial generated claims:
+## 6. System Architecture
 
 ```text
-100,000
+                    ┌─────────────────────────┐
+                    │ Synthetic Claims Data   │
+                    └────────────┬────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │ Data Quality Validation │
+                    └────────────┬────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │ Temporal Feature        │
+                    │ Engineering             │
+                    └────────────┬────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │ Model Experimentation   │
+                    │ & Champion Selection    │
+                    └────────────┬────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │ Frozen XGBoost Model    │
+                    │ + Preprocessor          │
+                    └────────────┬────────────┘
+                                 │
+             ┌───────────────────┴───────────────────┐
+             │                                       │
+   ┌─────────▼─────────┐                   ┌─────────▼─────────┐
+   │ TreeSHAP          │                   │ FraudScorer       │
+   │ Explainability    │                   │ Inference Layer   │
+   └───────────────────┘                   └─────────┬─────────┘
+                                                    │
+                                          ┌─────────▼─────────┐
+                                          │ FastAPI REST API  │
+                                          └─────────┬─────────┘
+                                                    │
+                                          ┌─────────▼─────────┐
+                                          │ Streamlit UI      │
+                                          └───────────────────┘
 ```
 
-Claims remaining after data-quality cleaning:
-
-```text
-99,911
-```
-
-Rejected invalid claims:
-
-```text
-89
-```
-
-Final blocking data-quality errors:
-
-```text
-0
-```
-
-Invalid records are preserved separately instead of being silently corrected.
+The frozen preprocessing and feature contracts used during final evaluation are reused at inference time.
 
 ---
 
-## Data Quality Pipeline
+## 7. Machine Learning Methodology
 
-The synthetic dataset intentionally contains a small number of invalid observations to reproduce realistic data-engineering conditions.
-
-Examples include:
-
-- non-positive claim amounts
-- invalid service-unit counts
-- service dates occurring after submission dates
-
-The cleaning pipeline validates these conditions and separates invalid records from the modelling population.
-
-Controlled missingness remains intentionally present in selected fields and is handled explicitly during feature engineering.
-
----
-
-## Temporal Validation Strategy
+### Temporal validation
 
 Random train/test splitting is deliberately avoided.
 
-A fraud model deployed in practice learns from historical claims and scores **future claims**. The evaluation strategy therefore reproduces this temporal direction.
+A deployed fraud model learns from historical claims and scores future claims, so the evaluation reproduces this temporal direction.
 
 | Split | Period |
 |---|---|
@@ -184,491 +216,112 @@ A fraud model deployed in practice learns from historical claims and scores **fu
 | Validation | 2025-07-01 → 2025-12-31 |
 | Final out-of-time test | 2026-01-01 → 2026-06-30 |
 
-The final test set contains:
+The final test period remains untouched during model selection.
 
-- **14,176 claims**
-- **409 fraudulent claims**
-- **2.885% fraud prevalence**
+### Candidate models
 
-The 2026 test period remains untouched during model selection.
+The experimentation stage compares:
 
-After champion selection, the preprocessing pipeline and final model are fitted on the combined training and validation population and evaluated once on the held-out test period.
+- Dummy classifier;
+- Logistic Regression;
+- class-balanced Logistic Regression;
+- Random Forest;
+- XGBoost.
 
----
+The final champion is:
 
-## Leakage Control
+**XGBoost — version 1.0.0**
 
-Synthetic fraud generation requires variables that would not exist in a real scoring environment.
-
-These variables are retained for simulation, diagnostics and evaluation but explicitly excluded from predictive modelling.
-
-Examples include:
-
-```text
-latent_fraud_score
-synthetic_fraud_probability
-fraud_difficulty
-fraud_mechanism
-legitimate_anomaly
-legitimate_anomaly_type
-```
-
-The target:
-
-```text
-is_fraud
-```
-
-is also excluded from the feature matrix.
-
-Historical behavioural features are constructed using information preceding the current claim to reduce temporal leakage.
+The production feature contract contains **57 source features**, transformed into **107 model features** by the frozen preprocessing pipeline.
 
 ---
 
-## Feature Engineering
+## 8. Feature Engineering
 
-The model uses several families of business and behavioural features.
+The model combines claim-level information with historical behavioural context.
 
-### Claim features
+Major feature families include:
 
-Examples include:
+- claim and reimbursement characteristics;
+- customer history;
+- policy history;
+- provider behaviour;
+- recent claim frequency;
+- recent monetary activity;
+- customer-provider interactions;
+- repeated-service activity;
+- temporal submission patterns;
+- relative anomaly indicators.
 
-- claim amount
-- requested reimbursement
-- reimbursement ratio
-- service category
-- service units
-- submission channel
-- documentation information
-
-### Customer features
-
-Examples include:
-
-- customer age
-- customer tenure
-- coverage level
-- customer behaviour segment
-
-### Policy features
-
-Examples include:
-
-- policy tenure
-- recent policy changes
-- time since policy change
-
-### Provider features
-
-Examples include:
-
-- provider type
-- provider region
-- provider tenure
-- provider behaviour segment
-
-### Historical behavioural features
-
-Examples include:
-
-- customer claims over 7 / 30 / 90 / 365 days
-- historical customer claim amounts
-- time since previous customer claim
-- time since previous claim with the same provider
-- repeated-service activity
-- customer-provider interaction frequency
-- provider claims over recent windows
-- provider historical claim amounts
-
-### Relative anomaly features
-
-Examples include:
+Examples of engineered signals include:
 
 ```text
 claim_to_service_median_ratio
 claim_to_customer_avg_ratio
 claim_to_provider_avg_ratio
 requested_to_limit_ratio
+recent_claim_share_30d_365d
+provider_recent_activity_ratio
 customer_provider_intensity
 same_service_intensity
 ```
 
-Relative anomaly features are particularly useful because suspicious behaviour often depends on deviation from an expected baseline rather than absolute amount alone.
+Special care is given to **temporal leakage control**: historical behavioural features use information available before the claim being scored.
+
+Synthetic generation variables such as fraud mechanism, fraud difficulty and latent fraud probability are explicitly excluded from predictive modelling.
 
 ---
 
-## Model Development
+## 9. Explainability with SHAP
 
-Several model families were evaluated:
+The XGBoost model is explained using **TreeSHAP**.
 
-- Dummy classifier
-- Logistic Regression
-- class-balanced Logistic Regression
-- Random Forest
-- XGBoost
+Explainability is available at two levels.
 
-The Dummy model establishes a non-informative baseline.
+### Global
 
-Logistic Regression provides an interpretable linear benchmark.
+- transformed feature importance;
+- business-level feature aggregation;
+- SHAP distribution analysis;
+- model-driver analysis.
 
-Random Forest and XGBoost capture nonlinear relationships and interactions between behavioural features.
+### Local
 
-Model selection is performed using the **validation period only**.
+For an individual claim, the application provides:
 
-The final champion model is:
+- fraud-risk probability;
+- baseline model output;
+- feature-level SHAP contributions;
+- strongest positive risk drivers;
+- strongest negative risk drivers;
+- consistency checks between model probability and SHAP reconstruction.
 
-> **XGBoost**
+The deployed explanation contract covers all **107 transformed features**.
 
-Final transformed matrix dimensions:
-
-```text
-Training + validation: 85,735 × 107
-Final test:            14,176 × 107
-```
-
----
-
-## Final Out-of-Time Performance
-
-### Global metrics
-
-| Metric | Test Result |
-|---|---:|
-| Average Precision | **0.5520** |
-| ROC-AUC | **0.8518** |
-| Brier Score | **0.0174** |
-| Log Loss | **0.0797** |
-
-Because fraud prevalence is low, **Average Precision** is particularly important.
-
-An Average Precision of **0.5520** is substantially above the approximately **2.9% fraud prevalence** of the test population.
-
----
-
-## Operational Performance — Top 3% Review
-
-The primary business operating point reviews the highest-risk **3% of claims**.
-
-| Metric | Result |
-|---|---:|
-| Claims reviewed | **426** |
-| True positives | **220** |
-| False positives | **206** |
-| False negatives | **189** |
-| True negatives | **13,561** |
-| Precision @ 3% | **51.64%** |
-| Recall @ 3% | **53.79%** |
-| Lift @ 3% | **17.90×** |
-| Fraud amount captured @ 3% | **55.15%** |
-
-This means that reviewing approximately **3% of claims** identifies more than half of the fraudulent claims in the synthetic test environment.
-
-The model is therefore interpreted primarily as a **ranking system**, rather than as a classifier using an arbitrary probability threshold such as `0.50`.
-
----
-
-## Investigation Capacity Trade-off
-
-Model performance was evaluated across several investigation capacities.
-
-| Review Rate | Precision | Recall | Lift | Fraud Amount Captured |
-|---:|---:|---:|---:|---:|
-| 0.5% | 98.59% | 17.11% | 34.17× | 16.93% |
-| 1% | 94.37% | 32.76% | 32.71× | 32.83% |
-| 2% | 68.31% | 47.43% | 23.68× | 48.66% |
-| **3%** | **51.64%** | **53.79%** | **17.90×** | **55.15%** |
-| 5% | 34.56% | 59.90% | 11.98× | 60.80% |
-| 7.5% | 24.81% | 64.55% | 8.60× | 68.74% |
-| 10% | 19.46% | 67.48% | 6.75× | 72.44% |
-| 15% | 13.82% | 71.88% | 4.79× | 76.69% |
-
-This illustrates the trade-off between investigation workload and fraud capture.
-
-The **3% threshold is a business operating point**, not an intrinsic statistical threshold.
-
----
-
-## Validation-to-Test Stability
-
-| Metric | Validation | Test | Difference |
-|---|---:|---:|---:|
-| Average Precision | 0.4846 | 0.5520 | +0.0674 |
-| ROC-AUC | 0.8451 | 0.8518 | +0.0067 |
-| Brier Score | 0.0183 | 0.0174 | -0.0009 |
-| Precision @ 3% | 46.53% | 51.64% | +5.12 pp |
-| Recall @ 3% | 51.28% | 53.79% | +2.51 pp |
-| Lift @ 3% | 17.08× | 17.90× | +0.82× |
-| Fraud amount capture @ 3% | 49.07% | 55.15% | +6.08 pp |
-
-No major degradation is observed between validation and the final out-of-time test period.
-
-These results nevertheless originate from the same synthetic simulation framework and should not be interpreted as evidence of real-world production stability.
-
----
-
-## Explainability
-
-The frozen XGBoost model is analysed using **SHAP**.
-
-The explainability pipeline covers:
-
-- global feature importance
-- business-level feature aggregation
-- local claim explanations
-- true-positive cases
-- false-positive cases
-- false-negative cases
-- legitimate anomalies
-- difficult fraud cases
-- mechanism-specific failures
-
-SHAP explanations are calculated on a representative sample of:
-
-```text
-5,000 test claims
-```
-
-The transformed model contains:
-
-```text
-107 model features
-```
-
-### Main business drivers
-
-The five strongest business-level drivers are:
-
-1. `claim_to_service_median_ratio`
-2. `days_since_customer_previous_claim`
-3. `reimbursement_ratio`
-4. `provider_claims_30d`
-5. `submission_month`
-
-The strongest observed driver is:
-
-```text
-claim_to_service_median_ratio
-```
-
-This suggests that deviation of a claim amount from the historical amount expected for the corresponding service is an important model risk signal.
-
-SHAP describes **model behaviour**, not causal relationships.
-
-### Global SHAP importance
+SHAP is used to explain **model behaviour**, not to establish causal relationships.
 
 ![Global SHAP Feature Importance](artifacts/explainability/figures/01_shap_global_bar.png)
 
-### SHAP distribution
-
-![SHAP Beeswarm](artifacts/explainability/figures/02_shap_beeswarm.png)
+![SHAP Distribution](artifacts/explainability/figures/02_shap_beeswarm.png)
 
 ---
 
-## Error Analysis
+## 10. REST API
 
-Aggregate model metrics can hide important failure modes.
-
-The project therefore performs dedicated false-positive, false-negative, fraud-mechanism and fraud-difficulty analysis.
-
-### Recall by fraud mechanism at 3%
-
-| Fraud Mechanism | Recall @ 3% |
-|---|---:|
-| Customer-provider pattern | **80.30%** |
-| Repeated service | **68.97%** |
-| Mixed pattern | **61.76%** |
-| Frequency abuse | **57.75%** |
-| Provider abnormality | **53.52%** |
-| Amount inflation | **8.00%** |
-
-The main observed model weakness is:
-
-> **Amount inflation**
-
-Among missed fraudulent claims, `amount_inflation` accounts for **69 false negatives**.
-
----
-
-## Fraud Difficulty
-
-Performance also varies according to the synthetic fraud-difficulty label.
-
-| Difficulty | Median Risk Score | Recall @ 3% |
-|---|---:|---:|
-| Easy | 0.6707 | **67.26%** |
-| Medium | 0.2050 | **55.45%** |
-| Hard | 0.0261 | **28.95%** |
-
-The expected ordering is preserved:
-
-```text
-Easy > Medium > Hard
-```
-
-Hard fraud therefore remains an important residual risk.
-
----
-
-## False Positive Analysis
-
-At the 3% operating point:
-
-```text
-206 legitimate claims
-```
-
-are selected for investigation.
-
-Among these false positives:
-
-```text
-57.77%
-```
-
-correspond to simulated legitimate anomalies.
-
-Examples include:
-
-- repeated legitimate services
-- unusual but legitimate provider behaviour
-- legitimate high-frequency activity
-- legitimate high-amount claims
-
-This illustrates why model scores should support investigators rather than replace human judgement.
-
----
-
-## False Negative Analysis
-
-At the same operating point:
-
-```text
-189 fraudulent claims
-```
-
-are not selected for investigation.
-
-The largest missed-fraud mechanism is:
-
-```text
-amount_inflation — 69 claims
-```
-
-Other missed mechanisms include:
-
-- provider abnormality
-- frequency abuse
-- mixed patterns
-- repeated services
-- customer-provider patterns
-
-These failure modes are explicitly documented rather than hidden behind aggregate performance metrics.
-
----
-
-## Statistical Uncertainty
-
-Bootstrap confidence intervals were estimated on the final test population.
-
-### Average Precision
-
-```text
-Estimate: 0.5520
-95% CI:   [0.5036, 0.6029]
-```
-
-### ROC-AUC
-
-```text
-Estimate: 0.8518
-95% CI:   [0.8235, 0.8782]
-```
-
-These intervals quantify sampling uncertainty within the synthetic test population.
-
-They do not capture uncertainty caused by differences between synthetic and real insurance data.
-
----
-
-# Production-Style Inference
-
-The frozen model is exposed through a reusable inference layer.
-
-The scoring pipeline:
-
-```text
-Raw Claim
-    ↓
-Feature Contract Validation
-    ↓
-Feature Engineering
-    ↓
-Frozen Preprocessor
-    ↓
-Frozen XGBoost Model
-    ↓
-Fraud Probability
-    ↓
-Risk Ranking
-```
-
-The production-style scoring wrapper is implemented in:
-
-```text
-src/health_fraud/models/predict.py
-```
-
-The feature-construction pipeline is implemented in:
-
-```text
-src/health_fraud/features/build.py
-```
-
----
-
-## Batch Scoring
-
-Claims can be scored from the command line using:
-
-```bash
-python scripts/score_claims.py
-```
-
-The script generates:
-
-```text
-artifacts/predictions/claim_scores.parquet
-artifacts/predictions/top_review_claims.parquet
-```
-
-A complete scoring run on the cleaned dataset processes:
-
-```text
-99,911 claims
-```
-
-and generates a top-3% investigation queue.
-
----
-
-# REST API
-
-The trained model is exposed through a **FastAPI REST API**.
-
-## Available Endpoints
+Inference is exposed through **FastAPI**.
 
 | Method | Endpoint | Purpose |
 |---|---|---|
 | `GET` | `/` | Service information |
-| `GET` | `/health` | API and model health |
-| `GET` | `/model-info` | Frozen model metadata |
+| `GET` | `/health` | Runtime and model health |
+| `GET` | `/model-info` | Deployed model contract |
 | `POST` | `/score` | Score one claim |
 | `POST` | `/score-batch` | Score multiple claims |
-| `POST` | `/top-review` | Return highest-risk investigation queue |
-| `GET` | `/docs` | Swagger UI |
-| `GET` | `/openapi.json` | OpenAPI specification |
+| `POST` | `/top-review` | Generate prioritized review queue |
+| `POST` | `/explain` | Explain an individual prediction |
+| `GET` | `/docs` | Interactive OpenAPI documentation |
 
-### Example health response
+Example health contract:
 
 ```json
 {
@@ -681,27 +334,87 @@ The trained model is exposed through a **FastAPI REST API**.
 
 ---
 
-## Running the API Locally
+## 11. Streamlit Frontend
 
-### 1. Create a virtual environment
+The investigation interface is implemented with **Streamlit**.
+
+The frontend communicates with FastAPI through a dedicated API client rather than loading the model independently.
+
+```text
+Browser
+   ↓
+Streamlit
+   ↓
+FraudAPIClient
+   ↓
+FastAPI
+   ↓
+FraudScorer
+   ↓
+Preprocessor + XGBoost + TreeSHAP
+```
+
+This separation keeps model inference centralized and creates a clearer boundary between presentation and ML serving.
+
+---
+
+## 12. Repository Structure
+
+```text
+Fraud-risk-model/
+│
+├── api/                    # FastAPI inference service
+├── artifacts/
+│   ├── explainability/     # SHAP and error-analysis artifacts
+│   ├── metadata/           # Model metadata and evaluation figures
+│   ├── models/             # Frozen model
+│   ├── predictions/        # Scoring outputs
+│   └── preprocessors/      # Frozen preprocessing pipeline
+│
+├── configs/                # Project configuration
+├── data/                   # Synthetic data pipeline outputs
+├── docs/                   # Project documentation
+├── frontend/               # Streamlit application
+├── notebooks/              # Analysis and experimentation
+├── scripts/                # Operational scripts
+├── src/health_fraud/       # Core ML package
+├── tests/
+│   ├── unit/
+│   └── integration/
+│
+├── .github/workflows/      # Continuous integration
+├── Dockerfile              # API image
+├── docker-compose.yml      # Local application stack
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## 13. Local Installation
+
+### Clone
+
+```bash
+git clone https://github.com/Simo-Mesbahi/Fraud-risk-model.git
+cd Fraud-risk-model
+```
+
+### Create environment
 
 ```bash
 python -m venv .venv
-```
-
-Activate it:
-
-```bash
 source .venv/bin/activate
 ```
 
-Install dependencies:
+### Install dependencies
 
 ```bash
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-### 2. Start the API
+### Run the API
 
 ```bash
 PYTHONPATH=.:src python -m uvicorn api.app.main:app \
@@ -709,444 +422,251 @@ PYTHONPATH=.:src python -m uvicorn api.app.main:app \
   --port 8000
 ```
 
-Swagger documentation is then available at:
+### Run the frontend
+
+```bash
+PYTHONPATH=.:src streamlit run frontend/app.py \
+  --server.port 8501
+```
+
+API documentation:
 
 ```text
 http://localhost:8000/docs
 ```
 
-Health endpoint:
+Frontend:
 
 ```text
-http://localhost:8000/health
+http://localhost:8501
 ```
 
 ---
 
-# Docker
+## 14. Docker Deployment
 
-The API is fully containerized.
-
-## Build
+The complete application can be started with Docker Compose:
 
 ```bash
-docker build -t health-fraud-api .
+docker compose build
+docker compose up -d
 ```
 
-## Run
-
-```bash
-docker run --rm \
-  -p 8000:8000 \
-  --name health-fraud-api \
-  health-fraud-api
-```
-
----
-
-## Docker Compose
-
-The complete API can also be started using:
-
-```bash
-docker compose up --build -d
-```
-
-Check the container:
+Check runtime status:
 
 ```bash
 docker compose ps
 ```
 
-Expected status:
+Local services:
 
 ```text
-health-fraud-api   Up (...) (healthy)
+API       http://localhost:8000
+Frontend  http://localhost:8501
 ```
 
-Test the health endpoint:
+The API and frontend containers expose independent health checks.
 
-```bash
-curl -i http://127.0.0.1:8000/health
-```
-
-Stop the service:
-
-```bash
-docker compose down
-```
-
-The Docker Compose service includes an automated healthcheck against `/health`.
-
----
-
-# Automated Tests
-
-The repository contains automated API tests covering:
-
-- health endpoint
-- model metadata
-- single-claim scoring
-- batch scoring
-- top-fraction investigation selection
-- invalid review fraction handling
-- missing feature handling
-
-Run the complete test suite with:
-
-```bash
-PYTHONPATH=.:src python -m pytest api/tests tests -v
-```
-
-Current validated result:
+For hosted deployment, the services can be deployed independently while the frontend receives the API base URL through:
 
 ```text
-7 passed
+FRAUD_API_URL
 ```
 
 ---
 
-# Continuous Integration
+## 15. Testing & Quality Assurance
 
-The project uses **GitHub Actions** for continuous integration.
+The project contains dedicated **unit and integration tests** covering the critical ML and application contracts.
 
-The workflow runs automatically on pushes and pull requests targeting `main`.
+Current validated suite:
 
 ```text
-Git Push / Pull Request
-        ↓
-Checkout Repository
-        ↓
-Python 3.12
-        ↓
-Install Dependencies
-        ↓
-Compilation Checks
-        ↓
-pytest
-        ↓
-CI Pass / Fail
+228 tests passed
+Critical-path coverage: 78.33%
+Required coverage gate: 75%
 ```
 
-The latest validated workflow successfully passes the complete automated test suite.
+Coverage includes:
 
-Workflow definition:
+- feature validation;
+- inference preparation;
+- deterministic scoring;
+- ranking behaviour;
+- top-fraction selection;
+- model artifact contracts;
+- API contracts;
+- batch scoring;
+- TreeSHAP additivity;
+- probability / explanation consistency;
+- frontend ↔ API integration;
+- formatting and validation utilities.
+
+GitHub Actions automatically validates the project on pushes and pull requests to `main`.
+
+The CI pipeline includes:
 
 ```text
-.github/workflows/tests.yml
+Dependency validation
+        ↓
+Artifact validation
+        ↓
+Python compilation
+        ↓
+Import contracts
+        ↓
+Full test suite
+        ↓
+Coverage gate
+        ↓
+Docker build validation
 ```
 
 ---
 
-# Project Structure
+## 16. Model Artifacts & Metadata
+
+The deployed inference stack is versioned through explicit artifacts:
 
 ```text
-.
-├── .github/
-│   └── workflows/
-│       └── tests.yml
-│
-├── api/
-│   ├── app/
-│   │   ├── routers/
-│   │   ├── services/
-│   │   ├── dependencies.py
-│   │   ├── main.py
-│   │   └── schemas.py
-│   └── tests/
-│
-├── artifacts/
-│   ├── explainability/
-│   ├── metadata/
-│   ├── models/
-│   ├── predictions/
-│   └── preprocessors/
-│
-├── configs/
-│   ├── data.yaml
-│   ├── model.yaml
-│   └── thresholds.yaml
-│
-├── data/
-│   ├── interim/
-│   ├── processed/
-│   ├── raw/
-│   └── synthetic/
-│
-├── docs/
-│   ├── data_dictionary.md
-│   ├── methodology.md
-│   ├── model_card.md
-│   └── problem_definition.md
-│
-├── notebooks/
-│   ├── 01_data_understanding.ipynb
-│   ├── 02_exploratory_data_analysis.ipynb
-│   ├── 03_feature_analysis.ipynb
-│   ├── 04_model_experiments.ipynb
-│   ├── 05_model_evaluation.ipynb
-│   └── 06_model_explainability.ipynb
-│
-├── scripts/
-│   ├── clean_data.py
-│   ├── evaluate_model.py
-│   ├── generate_data.py
-│   ├── score_claims.py
-│   ├── train_model.py
-│   └── validate_data.py
-│
-├── src/
-│   └── health_fraud/
-│       ├── business/
-│       ├── data/
-│       ├── evaluation/
-│       ├── explainability/
-│       ├── features/
-│       └── models/
-│
-├── tests/
-├── Dockerfile
-├── docker-compose.yml
-├── pyproject.toml
-├── requirements.txt
-└── README.md
+artifacts/models/health_fraud_xgboost.joblib
+artifacts/preprocessors/health_fraud_preprocessor.joblib
+artifacts/metadata/health_fraud_model_metadata.json
 ```
+
+The metadata contract records information including:
+
+- model identity and version;
+- target;
+- source feature contract;
+- review policy;
+- training period;
+- test period;
+- hyperparameters;
+- final evaluation metrics.
+
+Explainability and evaluation artifacts are stored separately from the runtime model.
 
 ---
 
-# Reproducible Workflow
+## 17. Reproducibility
 
-## Generate synthetic data
+Reproducibility is supported through:
 
-```bash
-python scripts/generate_data.py --overwrite
-```
+- deterministic random seeds;
+- explicit temporal splits;
+- frozen feature ordering;
+- frozen preprocessing artifacts;
+- frozen model artifacts;
+- model metadata;
+- deterministic inference tests;
+- Dockerized runtime environments;
+- automated CI validation.
 
-## Validate generated data
-
-```bash
-python scripts/validate_data.py --data-dir data/synthetic
-```
-
-## Clean data
-
-```bash
-python scripts/clean_data.py
-```
-
-## Validate cleaned data
-
-```bash
-python scripts/validate_data.py --data-dir data/interim
-```
-
-## Score claims with the frozen model
-
-```bash
-python scripts/score_claims.py
-```
-
-## Run automated tests
-
-```bash
-PYTHONPATH=.:src python -m pytest api/tests tests -v
-```
-
-## Run with Docker Compose
-
-```bash
-docker compose up --build -d
-```
+The runtime API exposes the deployed model identity so the frontend can verify that it is communicating with the expected inference contract.
 
 ---
 
-# Model Governance
+## 18. Limitations
 
-The model is designed around a human-in-the-loop workflow:
+This project deliberately documents its limitations.
+
+### Synthetic data
+
+All modelling results originate from a configurable synthetic insurance environment.
+
+They demonstrate the modelling methodology and engineering architecture, but **cannot be interpreted as expected performance on real Foyer or other insurer data**.
+
+### Simulation-specific patterns
+
+Synthetic data may contain patterns that are easier or structurally different from fraud behaviour observed in production.
+
+### Residual fraud risk
+
+At the selected 3% operating point, a significant proportion of fraudulent claims remains outside the investigation queue.
+
+### Human decision required
+
+A high model score is not evidence that fraud occurred.
+
+The platform is designed to support investigation prioritization, not autonomous claim rejection.
+
+### Current model lifecycle
+
+The deployed `XGBoost — v1.0.0` model and its analytical artifacts are currently frozen.
+
+New data does not automatically trigger retraining or champion replacement.
+
+---
+
+## 19. Production Considerations
+
+A real insurance deployment would require additional controls around:
+
+- access control and authentication;
+- personal-data protection;
+- audit logging;
+- model and feature monitoring;
+- data-drift detection;
+- concept-drift monitoring;
+- model calibration monitoring;
+- investigation feedback capture;
+- model registry and version governance;
+- automated retraining controls;
+- champion / challenger evaluation;
+- controlled model promotion;
+- rollback capability;
+- security and infrastructure hardening.
+
+Model promotion should depend on multiple operational and statistical gates rather than a single performance metric.
+
+---
+
+## 20. Roadmap
+
+Planned extensions include:
 
 ```text
-Model
-  ↓
-Risk Ranking
-  ↓
-Investigation Queue
-  ↓
-Human Review
-  ↓
-Decision
+New labelled data
+       ↓
+Data-quality gates
+       ↓
+Candidate retraining
+       ↓
+Champion / Challenger evaluation
+       ↓
+Performance + stability gates
+       ↓
+Controlled model promotion
+       ↓
+Artifact regeneration
+       ↓
+CI validation
+       ↓
+Deployment
 ```
 
-The model should **not** independently:
+Priority improvements:
 
-- reject insurance claims
-- accuse customers or providers of fraud
-- infer criminal intent
-- make legal conclusions
-- replace fraud investigators
-
-A high fraud-risk score means that a claim exhibits patterns the model associates with fraudulent observations.
-
-It does **not** establish that fraud occurred.
-
----
-
-# Monitoring Strategy
-
-A real production deployment should monitor four main dimensions.
-
-### Data Quality
-
-- missing-value rates
-- schema changes
-- invalid values
-- categorical-domain changes
-- unexpected distributions
-
-### Data Drift
-
-Monitor changes in important variables such as:
-
-- claim amount
-- reimbursement ratio
-- service mix
-- provider activity
-- customer activity
-- claim-to-service ratio
-
-### Model Performance
-
-Once labels become available:
-
-- Average Precision
-- ROC-AUC
-- Precision@K
-- Recall@K
-- Lift@K
-- fraud amount captured
-- calibration
-
-### Operational Performance
-
-- investigation volume
-- confirmed-fraud yield
-- false-positive burden
-- investigation capacity
-- fraud amount recovered or prevented
+- automated training and evaluation pipeline;
+- model registry;
+- champion / challenger lifecycle;
+- automatic regeneration of evaluation artifacts;
+- drift monitoring;
+- production observability;
+- investigator feedback loop;
+- authentication and role-based access;
+- persistent investigation state;
+- automated deployment pipeline.
 
 ---
 
-# Known Limitations
+## 21. Author
 
-The most important limitation is that the entire modelling environment is **synthetic**.
+**Mohammed El Mesbahi**
 
-Real-world insurance data may contain:
+Data Science & Artificial Intelligence
 
-- different fraud mechanisms
-- stronger behavioural heterogeneity
-- coding inconsistencies
-- different missing-data mechanisms
-- provider networks
-- geographic effects
-- coordinated fraud rings
-- investigation feedback loops
-- changing fraud strategies
-- regulatory constraints
+Project focus:
 
-Reported performance therefore demonstrates the **machine-learning and engineering methodology**, not expected performance on real insurance claims.
-
-Additional observed limitations include:
-
-- weak detection of simulated `amount_inflation`
-- lower recall on hard fraud
-- legitimate anomalies producing false positives
-- potential concept drift
-- SHAP explanations being associative rather than causal
-
-A real deployment would require independent validation on representative insurance data, security controls, access governance, monitoring and regulatory review.
-
----
-
-# Technology Stack
-
-### Machine Learning
-
-`Python` · `pandas` · `NumPy` · `scikit-learn` · `XGBoost`
-
-### Explainability
-
-`SHAP`
-
-### Data
-
-`Parquet` · `PyArrow`
-
-### API
-
-`FastAPI` · `Pydantic` · `Uvicorn`
-
-### Testing
-
-`pytest`
-
-### Deployment
-
-`Docker` · `Docker Compose`
-
-### CI/CD
-
-`GitHub Actions`
-
----
-
-# Documentation
-
-Detailed project documentation is available in:
-
-- [`docs/problem_definition.md`](docs/problem_definition.md)
-- [`docs/data_dictionary.md`](docs/data_dictionary.md)
-- [`docs/methodology.md`](docs/methodology.md)
-- [`docs/model_card.md`](docs/model_card.md)
-
-The model card contains the complete discussion of:
-
-- intended use
-- evaluation methodology
-- leakage controls
-- model performance
-- explainability
-- failure modes
-- uncertainty
-- human oversight
-- monitoring
-- retraining
-- prohibited uses
-
----
-
-# Disclaimer
-
-This repository is an **educational and portfolio project using synthetic insurance data**.
-
-It is not a production fraud-detection system and should not be used to make decisions about real insurance claims, customers or healthcare providers.
-
-
-
-
-
-
-
----------------------------
----------------------------
-
-frontend/utils/state.py
-Je vais ajouter proprement l’état SHAP (single_explanation), sécuriser les resets et éviter les états obsolètes entre pages.
-frontend/components.py
-Très important : metric_card, info_panel, risk_gauge, risk_badge, section_header, empty_state, etc. doivent avoir une API visuelle cohérente, responsive et réutilisable partout.
-frontend/styles.py
-Là on verrouille le design system global : typographie, spacing, cartes, grilles, textes longs, responsive, overflow, tableaux, tabs, expander, boutons, métriques, dark theme. C’est ce fichier qui empêchera le retour des problèmes de texte coupé que tu avais eus.
-frontend/app.py
-Pour harmoniser navigation, header global, sidebar, statut API, branding et routing avec les nouvelles capacités TreeSHAP.
-Ensuite les vues, une par une :
-overview.py → portfolio_scoring.py → investigation_queue.py → model_insights.py → system_status.py.
-Enfin frontend/utils/data.py et frontend/utils/formatting.py
-On fera une dernière passe de cohérence : JSON-safe, formatage des montants/ratios/risques, noms métier, labels SHAP, imports communs et suppression des duplication
+** Data sciences · Machine Learning · Fraud Analytics · Explainable AI · Decision Support · ML Engineering**
