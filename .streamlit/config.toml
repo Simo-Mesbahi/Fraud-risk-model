@@ -1,4 +1,14 @@
+# =============================================================================
+# FRAUD INTELLIGENCE — STREAMLIT PRODUCTION CONFIGURATION
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Global theme defaults
+# -----------------------------------------------------------------------------
+
 [theme]
+
 base = "dark"
 
 primaryColor = "#4C8DFF"
@@ -34,11 +44,23 @@ violetColor = "#8B5CF6"
 grayColor = "#98A6BC"
 
 
-[theme.sidebar]
+# -----------------------------------------------------------------------------
+# DARK THEME
+# -----------------------------------------------------------------------------
+
+[theme.dark]
+
 primaryColor = "#4C8DFF"
-backgroundColor = "#080D18"
-secondaryBackgroundColor = "#0B1220"
-textColor = "#E8EEF8"
+
+backgroundColor = "#060A12"
+secondaryBackgroundColor = "#111827"
+
+textColor = "#F8FAFC"
+
+borderColor = "#253044"
+
+dataframeBorderColor = "#253044"
+dataframeHeaderBackgroundColor = "#0B1220"
 
 linkColor = "#70A6FF"
 linkUnderline = false
@@ -46,18 +68,150 @@ linkUnderline = false
 codeTextColor = "#DDEBFF"
 codeBackgroundColor = "#0B1220"
 
-borderColor = "#1C2636"
-dataframeBorderColor = "#1C2636"
-dataframeHeaderBackgroundColor = "#0B1220"
+redColor = "#FF5C7A"
+orangeColor = "#FF8A5B"
+yellowColor = "#FFD166"
+greenColor = "#61E7A6"
+blueColor = "#4C8DFF"
+violetColor = "#8B5CF6"
+grayColor = "#98A6BC"
 
 showWidgetBorder = true
 
 
+# -----------------------------------------------------------------------------
+# LIGHT THEME
+#
+# Intentionally uses the same controlled dark palette.
+#
+# This prevents Streamlit/browser theme switching from producing light widget
+# surfaces inside an application whose design system is intentionally dark.
+# -----------------------------------------------------------------------------
+
+[theme.light]
+
+primaryColor = "#4C8DFF"
+
+backgroundColor = "#060A12"
+secondaryBackgroundColor = "#111827"
+
+textColor = "#F8FAFC"
+
+borderColor = "#253044"
+
+dataframeBorderColor = "#253044"
+dataframeHeaderBackgroundColor = "#0B1220"
+
+linkColor = "#70A6FF"
+linkUnderline = false
+
+codeTextColor = "#DDEBFF"
+codeBackgroundColor = "#0B1220"
+
+redColor = "#FF5C7A"
+orangeColor = "#FF8A5B"
+yellowColor = "#FFD166"
+greenColor = "#61E7A6"
+blueColor = "#4C8DFF"
+violetColor = "#8B5CF6"
+grayColor = "#98A6BC"
+
+showWidgetBorder = true
+
+
+# -----------------------------------------------------------------------------
+# SIDEBAR — DEFAULT
+# -----------------------------------------------------------------------------
+
+[theme.sidebar]
+
+primaryColor = "#4C8DFF"
+
+backgroundColor = "#080D18"
+secondaryBackgroundColor = "#0B1220"
+
+textColor = "#E8EEF8"
+
+borderColor = "#1C2636"
+
+dataframeBorderColor = "#1C2636"
+dataframeHeaderBackgroundColor = "#0B1220"
+
+linkColor = "#70A6FF"
+linkUnderline = false
+
+codeTextColor = "#DDEBFF"
+codeBackgroundColor = "#0B1220"
+
+showWidgetBorder = true
+
+
+# -----------------------------------------------------------------------------
+# SIDEBAR — DARK
+# -----------------------------------------------------------------------------
+
+[theme.dark.sidebar]
+
+primaryColor = "#4C8DFF"
+
+backgroundColor = "#080D18"
+secondaryBackgroundColor = "#0B1220"
+
+textColor = "#E8EEF8"
+
+borderColor = "#1C2636"
+
+dataframeBorderColor = "#1C2636"
+dataframeHeaderBackgroundColor = "#0B1220"
+
+linkColor = "#70A6FF"
+linkUnderline = false
+
+codeTextColor = "#DDEBFF"
+codeBackgroundColor = "#0B1220"
+
+showWidgetBorder = true
+
+
+# -----------------------------------------------------------------------------
+# SIDEBAR — LIGHT
+#
+# Deliberately identical to the dark sidebar.
+# -----------------------------------------------------------------------------
+
+[theme.light.sidebar]
+
+primaryColor = "#4C8DFF"
+
+backgroundColor = "#080D18"
+secondaryBackgroundColor = "#0B1220"
+
+textColor = "#E8EEF8"
+
+borderColor = "#1C2636"
+
+dataframeBorderColor = "#1C2636"
+dataframeHeaderBackgroundColor = "#0B1220"
+
+linkColor = "#70A6FF"
+linkUnderline = false
+
+codeTextColor = "#DDEBFF"
+codeBackgroundColor = "#0B1220"
+
+showWidgetBorder = true
+
+
+# -----------------------------------------------------------------------------
+# SERVER — PRODUCTION
+# -----------------------------------------------------------------------------
+
 [server]
+
 headless = true
 
-# Production: disable filesystem watching.
-# Prevents watchdog/inotify exhaustion on constrained containers.
+# Disable source-code watching in production.
+# Prevents watchdog/inotify exhaustion on Render.
 fileWatcherType = "none"
 
 runOnSave = false
@@ -65,10 +219,20 @@ runOnSave = false
 enableXsrfProtection = true
 
 
+# -----------------------------------------------------------------------------
+# BROWSER
+# -----------------------------------------------------------------------------
+
 [browser]
+
 gatherUsageStats = false
 
 
+# -----------------------------------------------------------------------------
+# CLIENT
+# -----------------------------------------------------------------------------
+
 [client]
+
 showErrorDetails = "none"
 toolbarMode = "minimal"
